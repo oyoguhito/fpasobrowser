@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    # Servo has large native artifacts. Three jobs leave a Cargo jobserver token
+    # for WebRender's shader generator; one or two can stall a cold build.
+    env:
+      CARGO_BUILD_JOBS: 3
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x64
+            os: ubuntu-latest
+          - label: macos-arm64
+            os: macos-latest
+          - label: windows-x64
+            os: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install Python for Servo Stylo
+        if: runner.os == 'Windows'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Enable compiler cache
+        uses: mozilla-actions/sccache-action@v0.0.11
+
+      - name: Install Linux linker
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # Servo's font stack links against system Fontconfig on Linux.
+          # `libfontconfig1-dev` supplies the fontconfig.pc file required by
+          # yeslogic-fontconfig-sys during the release build.
+          sudo apt-get install -y clang mold libfontconfig1-dev
+
+      - name: Cache Cargo target and registry
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      # Renderer tests do not need Servo. Keeping lint/test coverage here
+      # avoids a second full Servo compile before the release artifact build.
+      - name: Clippy renderer library and tests
+        run: cargo clippy --no-default-features --lib --tests -- -D warnings
+
+      - name: Test renderer library
+        run: cargo test --locked --no-default-features --lib --tests
+
+      - name: Build release binary
+        run: cargo build --locked --release
+
+      - name: Stage Windows ANGLE runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/prepare-windows-runtime.ps1 -Profile release
+
+      - name: Render Windows built-in start page
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./target/release/fpasobrowser.exe --capture-only --viewport 640x360 --dump-screenshot servo-start-page.png
+          if (-not (Test-Path -LiteralPath servo-start-page.png -PathType Leaf)) {
+            throw "Servo did not write the built-in start page screenshot."
+          }
+
+      - name: Package platform artifact
+        shell: bash
+        run: bash scripts/package-artifact.sh "${{ matrix.label }}"
+
+      - name: Upload platform artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: fpasobrowser-${{ matrix.label }}
+          path: artifacts/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
