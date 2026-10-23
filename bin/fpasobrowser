@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Run fpasobrowser from a source checkout without making callers remember
+# Cargo's target path. The first invocation (or one after Rust sources change)
+# builds the debug binary; later invocations directly exec that binary.
+set -euo pipefail
+
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+repo_dir="$(CDPATH= cd -- "$script_dir/.." && pwd)"
+binary="${FPASOBROWSER_BINARY:-$repo_dir/target/debug/fpasobrowser}"
+cargo_command="${CARGO:-cargo}"
+
+needs_build=false
+if [[ ! -x "$binary" ]]; then
+    needs_build=true
+elif [[ "$repo_dir/Cargo.toml" -nt "$binary" || "$repo_dir/Cargo.lock" -nt "$binary" || "$repo_dir/build.rs" -nt "$binary" ]]; then
+    needs_build=true
+elif [[ -f "$repo_dir/.cargo/config.toml" && "$repo_dir/.cargo/config.toml" -nt "$binary" ]]; then
+    needs_build=true
+elif find "$repo_dir/src" -type f -newer "$binary" -print -quit | grep -q .; then
+    needs_build=true
+fi
+
+if [[ "$needs_build" == true ]]; then
+    if ! command -v "$cargo_command" >/dev/null 2>&1; then
+        standard_cargo="${CARGO_HOME:-$HOME/.cargo}/bin/cargo"
+        if [[ "$cargo_command" == "cargo" && -x "$standard_cargo" ]]; then
+            cargo_command="$standard_cargo"
+        else
+            echo "fpasobrowser: Cargo was not found. Install Rust stable, or use a release binary." >&2
+            exit 127
+        fi
+    fi
+    echo "fpasobrowser: building the local debug binary (first build can take a while)..." >&2
+    (
+        cd "$repo_dir"
+        "$cargo_command" build --bin fpasobrowser
+    )
+fi
+
+exec "$binary" "$@"
