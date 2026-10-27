@@ -89,11 +89,7 @@ jobs:
       - name: Render Windows built-in start page
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          ./target/release/fpasobrowser.exe --capture-only --viewport 640x360 --dump-screenshot servo-start-page.png
-          if (-not (Test-Path -LiteralPath servo-start-page.png -PathType Leaf)) {
-            throw "Servo did not write the built-in start page screenshot."
-          }
+        run: ./scripts/test-windows-start-page.ps1 -Profile release
 
       - name: Package platform artifact
         shell: bash

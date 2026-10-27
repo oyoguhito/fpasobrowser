@@ -101,9 +101,9 @@ file /tmp/fpasobrowser-check.png
 ```
 
 Then test the terminal UI in an interactive terminal. The omitted backend is
-`kitty`, which is the recommended default in fpasoterm and other Kitty Graphics
-Protocol terminals. Use explicit `half-block` for a portable but visibly
-lower-resolution fallback.
+`kitty` on Linux/macOS and portable `half-block` on Windows. In fpasoterm or
+another verified Kitty Graphics Protocol terminal, request high-resolution
+output explicitly with `--backend kitty`.
 
 ```sh
 ./bin/fpasobrowser \
@@ -145,10 +145,13 @@ to try in a Herdr pane is:
 ./bin/fpasobrowser
 ```
 
-The default `kitty` backend still requires both the Herdr server/client and the
-outer terminal to handle Kitty Graphics correctly. Herdr configuration can
-explicitly enable it with `[terminal] kitty_graphics = true`; changing that
-setting requires a Herdr restart or client reattach. If an image is clipped,
+On Linux and macOS, the default `kitty` backend requires both the Herdr
+server/client and the outer terminal to handle Kitty Graphics correctly. On
+Windows, the omitted backend is the portable `half-block`; request `--backend
+kitty` only after confirming that the fpasoterm/Herdr path renders Kitty
+images. Herdr configuration can explicitly enable it with `[terminal]
+kitty_graphics = true`; changing that setting requires a Herdr restart or
+client reattach. If an image is clipped,
 translated into another pane, or mouse input does not reach the viewer, that is
 a Herdr pane-graphics/input-routing issue rather than a Chromium dependency in
 fpasobrowser. As a diagnostic fallback, `--backend half-block` needs no Kitty
@@ -308,7 +311,8 @@ Controls:
 - PNG/JPEG decode and resizing with `image`
 - URL validation with `url`
 - OS default browser handoff with `open`
-- Default renderer: Kitty Graphics Protocol PNG transport (`kitty`)
+- Default renderer: `kitty` on Linux/macOS; portable ANSI truecolor
+  `half-block` on Windows
 - Explicit fallback renderers: ANSI truecolor + upper half block (`--backend half-block`)
   and SIXEL (`--backend sixel`)
 
@@ -319,7 +323,7 @@ Controls:
 | `auto` | Available | Explicit portable choice; currently resolves to `half-block`. Later it can probe terminal capabilities. |
 | `half-block` | Available | ANSI truecolor renderer using `▀`. Works in ordinary modern terminals and does not need Kitty/SIXEL/iTerm2 image protocols. Lower fidelity than real image protocols. |
 | `sixel` | Available | Encodes the screenshot as a 216-color SIXEL image. Its default 8×17-pixel cell estimate matches fpasoterm's Linux/ChromeOS terminal grid. Servo's dynamic viewport uses exactly the same geometry, so the screenshot is not enlarged again during SIXEL presentation and mouse coordinates remain aligned while preserving the three UI lines. Use `--sixel-cell-size WIDTHxHEIGHT` (or `FPASOBROWSER_SIXEL_CELL_SIZE`) when another SIXEL terminal uses different physical cell dimensions; the toolbar shows the active value. Full-frame updates are deduplicated, hover redraw is suppressed, and loading is polled at a lower rate so click navigation finishes without idle flicker. |
-| `kitty` | Default / available | Sends PNG screenshots through Kitty Graphics Protocol and places them in terminal cells. This is the default for fpasoterm/Kitty-compatible terminals. |
+| `kitty` | Available; default on Linux/macOS | Sends PNG screenshots through Kitty Graphics Protocol and places them in terminal cells. On Windows, request it explicitly in fpasoterm/another verified Kitty-compatible terminal. |
 
 ## Documentation
 
@@ -334,7 +338,8 @@ Controls:
   exposed yet.
 - Scrolling currently re-captures the page after moving `window.scrollY`.
 - Image quality with `half-block` is intentionally limited. The omitted
-  `kitty` default provides real image transport in compatible terminals.
+  backend is `kitty` on Linux/macOS and `half-block` on Windows; Windows users
+  can explicitly select `kitty` in a verified compatible terminal.
 - Windows Terminal does not currently support Kitty Graphics Protocol or SIXEL,
   so native Windows Terminal uses `half-block`. SIXEL-capable Windows terminals
   can use `--backend sixel`.

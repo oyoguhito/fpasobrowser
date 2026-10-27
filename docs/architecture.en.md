@@ -57,12 +57,14 @@ with the image, but exact sizing still needs per-terminal refinement.
 
 ## Backend selection
 
-The omitted CLI backend is `kitty`. Explicit `--backend auto` currently selects
-`half-block`. The backend values are:
+The omitted CLI backend is `kitty` on Linux/macOS and `half-block` on Windows.
+Explicit `--backend auto` currently selects `half-block`. The backend values
+are:
 
 - `half-block`: explicit ANSI truecolor fallback.
 - `sixel`: 216-color SIXEL image backend for SIXEL-capable terminals.
-- `kitty`: default Kitty Graphics Protocol backend.
+- `kitty`: Kitty Graphics Protocol backend, default on Linux/macOS and
+  explicit on Windows after terminal support has been verified.
 
 The `RenderBackend` trait is the boundary for future protocol-specific
 implementations. `app.rs` should select a backend and call the trait without

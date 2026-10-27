@@ -43,6 +43,14 @@ const LOADING_REDRAW_INTERVAL: Duration = Duration::from_millis(500);
 // when that sampled frame is unchanged.
 const SIXEL_LOADING_REDRAW_INTERVAL: Duration = Duration::from_millis(850);
 const INPUT_REDRAW_DELAY: Duration = Duration::from_millis(90);
+// The first SoftwareRenderingContext read can still contain the platform
+// surface's white clear colour even after Servo has accepted a navigation.
+// Take a couple of inexpensive follow-up samples at startup: if that first
+// frame was only the unpainted surface, the actual page replaces it without
+// waiting for a keypress, mouse event, or terminal resize. Identical images
+// are fingerprinted and therefore do not cause an extra terminal transfer.
+const STARTUP_REDRAW_SAMPLES: u8 = 2;
+const STARTUP_REDRAW_DELAY: Duration = Duration::from_millis(180);
 // Re-emitting a complete SIXEL frame for every typed character can saturate
 // the PTY and delay the next mouse event. Status feedback stays immediate;
 // only the screenshot refresh is debounced a little longer.
@@ -346,6 +354,7 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
     let mut primary_mouse_down = false;
     let mut message = String::from(DEFAULT_ACTIVITY_MESSAGE);
     let mut loading_frame = 0_u8;
+    let mut startup_redraws_remaining = STARTUP_REDRAW_SAMPLES;
 
     loop {
         if pending_redraw_at.is_some_and(|deadline| Instant::now() >= deadline) {
@@ -404,7 +413,10 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                 .await;
                 match redraw_result {
                     Ok(Ok(outcome)) => {
-                        if outcome.is_loading {
+                        if startup_redraws_remaining > 0 {
+                            startup_redraws_remaining -= 1;
+                            pending_redraw_at = Some(Instant::now() + STARTUP_REDRAW_DELAY);
+                        } else if outcome.is_loading {
                             loading_frame = loading_frame.wrapping_add(1);
                             pending_redraw_at = Some(Instant::now() + loading_redraw_interval);
                         } else {

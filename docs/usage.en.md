@@ -82,9 +82,10 @@ target/debug/fpasobrowser --capture-only --viewport 1200x800 \
 file /tmp/fpasobrowser-check.png
 ```
 
-Then test the actual terminal UI. The omitted backend is `kitty`, the default
-for fpasoterm or another terminal that implements Kitty Graphics Protocol.
-Otherwise use the lower-fidelity but portable `half-block` backend explicitly.
+Then test the actual terminal UI. The omitted backend is `kitty` on Linux and
+macOS, and portable `half-block` on Windows. In fpasoterm or another terminal
+that implements Kitty Graphics Protocol, request the higher-fidelity Kitty
+backend explicitly with `--backend kitty`.
 
 ```sh
 ./bin/fpasobrowser \
@@ -129,10 +130,12 @@ fpasobrowser --backend sixel --sixel-cell-size 8x17 https://example.com/
 fpasobrowser https://example.com/
 ```
 
-The omitted default is `kitty`, which sends the rendered PNG via Kitty Graphics
-Protocol and is preferred in fpasoterm. Explicit `auto` currently selects
-`half-block`, which works in modern truecolor terminals but is visibly lower
-resolution. `sixel` uses a 216-color SIXEL stream for SIXEL-capable terminals.
+The omitted default is `kitty` on Linux/macOS and `half-block` on Windows.
+`kitty` sends the rendered PNG via Kitty Graphics Protocol; in fpasoterm on
+Windows, request it explicitly after verifying that the terminal path supports
+Kitty images. Explicit `auto` also currently selects `half-block`, which works
+in modern truecolor terminals but is visibly lower resolution. `sixel` uses a
+216-color SIXEL stream for SIXEL-capable terminals.
 Its default 8×17-pixel cell estimate matches fpasoterm's Linux/ChromeOS grid,
 and also sizes Servo's dynamic viewport. That avoids upscaling the screenshot
 again in the SIXEL renderer while preserving status/tab/toolbar rows and
@@ -152,8 +155,9 @@ a Herdr pane:
 
 The current Herdr source enables Kitty Graphics by default and implements
 mouse-report forwarding for pane applications. When the outer terminal also
-supports Kitty Graphics, the default `kitty` backend is therefore the path to
-try. To explicitly configure it, set the following and restart the Herdr server
+supports Kitty Graphics, use `--backend kitty` (it is already the Linux/macOS
+default; Windows keeps the portable half-block default). To explicitly
+configure it, set the following and restart the Herdr server
 or reattach the client:
 
 ```toml

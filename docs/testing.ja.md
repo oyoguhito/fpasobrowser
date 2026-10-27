@@ -103,11 +103,13 @@ mappingには必ず同じ値が使われます。
 terminalをresizeして画像がviewport内に収まること、画像下のstatus/tab/toolbarの3行が見えることも
 確認します。pointerを動かした後に見えているbuttonまたはinputをleft clickし、全画面点滅を繰り返さず、
 pageのloading完了後にclickによる画面遷移結果が表示されることも確認します。SIXELではcosmetic hover stateを意図的に再描画しないため、
-操作feedbackにはclick、Tab、または`i`を使います。SIXELは明示指定専用であり、引数省略時は `kitty`、
-`--backend auto` は広く互換性のあるhalf-block backendを選び続けます。SIXEL非対応terminalでは空白または
-literal control dataになる場合があります。その場合は既定の `kitty` または `--backend half-block` を使います。
+操作feedbackにはclick、Tab、または`i`を使います。SIXELは明示指定専用であり、引数省略時はLinux/macOSでは `kitty`、Windowsでは
+`half-block` です。`--backend auto` も広く互換性のあるhalf-block backendを選び続けます。SIXEL非対応terminalでは空白または
+literal control dataになる場合があります。Kitty対応を確認できたterminalだけで `--backend kitty` を使い、それ以外では `--backend half-block` を使います。
 
 CI workflowでは、Clippyで組み込みServo application全体をtype checkした後、graphical
 desktop sessionを要求せずrenderer library/integration testを実行します。Cargo jobは3本にして、
 linkerの並列度を抑えつつWebRender shader generator用のjobserver tokenを確保します。
 embedded rendering contextを対象にしたServo offscreen probeもcompile対象です。
+Windowsではrelease executableで組込みstart pageをcaptureし、PNGのsample pixelがANGLEの一様な白clear
+surfaceではないことも確認します。PNG作成成功だけでは発見できないblank capture回帰を検出します。

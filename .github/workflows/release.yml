@@ -118,6 +118,11 @@ jobs:
         shell: pwsh
         run: ./scripts/prepare-windows-runtime.ps1 -Profile release
 
+      - name: Render Windows built-in start page
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-windows-start-page.ps1 -Profile release
+
       - name: Package platform artifact
         shell: bash
         run: bash scripts/package-artifact.sh "${{ matrix.label }}"

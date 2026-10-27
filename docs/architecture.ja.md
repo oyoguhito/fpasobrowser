@@ -48,12 +48,12 @@ SIXEL表示時にscreenshotを二重拡大しないようにします。画像�
 
 ## backend selection
 
-引数を省略したCLIの既定backendは `kitty` です。明示的な`--backend auto`は現時点では
-`half-block` を選びます。指定できる値は以下です。
+引数を省略したCLIの既定backendは、Linux/macOSでは `kitty`、Windowsでは `half-block` です。
+明示的な`--backend auto`も現時点では`half-block` を選びます。指定できる値は以下です。
 
 - `half-block`: 明示指定するANSI truecolor fallback。
 - `sixel`: SIXEL対応terminal向けの216色SIXEL image backend。
-- `kitty`: 既定のKitty Graphics Protocol backend。
+- `kitty`: Linux/macOSの既定であるKitty Graphics Protocol backend。Windowsではfpasotermなどで対応を確認した場合に明示指定します。
 
 `RenderBackend` traitをprotocol固有実装の境界にし、`app.rs` はbackendを選んでtraitを
 呼ぶだけにします。

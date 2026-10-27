@@ -123,15 +123,19 @@ the click must be accepted and its resulting page change must appear after the
 page finishes loading, without repeated full-screen blinking. SIXEL
 intentionally does not redraw cosmetic hover states, so use click, Tab, or
 `i` for interaction feedback. SIXEL is explicit-only: the omitted backend is
-`kitty`, while `--backend auto` continues to select the broadly compatible
-half-block backend. A terminal without SIXEL support can show a blank result or
-literal control data; use the default `kitty` or `--backend half-block` there
-instead.
+`kitty` on Linux/macOS and `half-block` on Windows, while `--backend auto`
+continues to select the broadly compatible half-block backend. A terminal
+without SIXEL support can show a blank result or literal control data; use
+`--backend kitty` only in a verified Kitty-capable terminal, otherwise use
+`--backend half-block`.
 
 The CI workflow type-checks the full embedded-Servo application with Clippy,
 then runs the renderer library/integration tests without requiring a graphical
 desktop session. It uses three Cargo build jobs: that keeps linking bounded
 while leaving a jobserver token for WebRender's shader generator during a cold
 build.
+On Windows it also launches the release executable with the built-in start
+page and verifies sampled PNG pixels are not the uniform white ANGLE clear
+surface. This guards against a successful-but-blank offscreen capture.
 The Servo offscreen probe additionally checks that the embedded rendering
 context can be compiled.

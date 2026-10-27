@@ -8,7 +8,7 @@ use crate::render::{RenderSize, TerminalCellPixels};
 use anyhow::{bail, Context, Result};
 use dpi::PhysicalSize;
 use embedder_traits::{EventLoopWaker, LoadStatus};
-use image::DynamicImage;
+use image::{DynamicImage, GenericImageView};
 use servo::{
     Code, CreateNewWebViewRequest, DeviceIntPoint, DeviceIntRect, InputEvent, JSValue, Key,
     KeyState, KeyboardEvent, Location, Modifiers, MouseButton, MouseButtonAction, MouseButtonEvent,
@@ -36,6 +36,12 @@ const DEFAULT_BROWSER_VIEWPORT_HEIGHT: u32 = 540;
 const ENGINE_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 const FRAME_WAIT_STEPS: usize = 600;
 const FRAME_WAIT_INTERVAL: Duration = Duration::from_millis(16);
+// Windows ANGLE can expose the software surface's white clear colour one or
+// two paints before WebRender has copied the document scene into it. Keep the
+// retry small and only use it for a near-white/transparent uniform frame;
+// normal white web pages with actual content still return immediately.
+const UNPAINTED_FRAME_RETRIES: usize = 3;
+const UNPAINTED_FRAME_RETRY_INTERVAL: Duration = Duration::from_millis(60);
 
 #[derive(Default)]
 struct PageSignals {
@@ -586,6 +592,12 @@ fn create_engine_tab(
         0,
         Some(initial_url),
     )?;
+    // Do not expose a WebView immediately after only a surface-read check.
+    // On Windows ANGLE that read can be the initial white clear buffer even
+    // though Servo has already emitted a frame-ready notification. A real
+    // screenshot request drives WebRender through its completion callback;
+    // `capture_frame` also retries an unpainted surface for a short interval.
+    let _ = capture_frame(servo, &webview, &rendering_context, viewport)?;
     Ok(EngineTab {
         webview,
         rendering_context,
@@ -1391,6 +1403,13 @@ fn capture_frame(
     rendering_context: &SoftwareRenderingContext,
     viewport: BrowserViewport,
 ) -> Result<DynamicImage> {
+    // The active WebView may have changed after a popup, tab selection, or a
+    // platform compositor callback. In particular, ANGLE requires its
+    // context to be current before a software-surface read; otherwise the
+    // previous white clear surface can be returned as a valid-looking frame.
+    rendering_context
+        .make_current()
+        .map_err(|error| anyhow::anyhow!("make Servo context current for screenshot: {error:?}"))?;
     // A form submission or link activation can leave the WebView in Loading
     // state for several seconds. `take_screenshot` may deliberately defer its
     // callback until that navigation has a new scene, which previously made
@@ -1403,29 +1422,80 @@ fn capture_frame(
             DeviceIntPoint::new(viewport.width as i32, viewport.height as i32),
         );
         if let Some(image) = rendering_context.read_to_image(bounds) {
-            return Ok(DynamicImage::ImageRgba8(image));
+            let image = DynamicImage::ImageRgba8(image);
+            // Do not present an untouched ANGLE/SoftwareRenderingContext
+            // surface as the page. Fall through to Servo's screenshot API,
+            // which requests a scene update and waits for it to complete.
+            if !is_probably_unpainted_surface(&image) {
+                return Ok(image);
+            }
         }
     }
     // A direct read of SoftwareRenderingContext can return the previous
     // `about:blank` frame. Servo's screenshot API requests a scene update and
     // invokes this callback only when WebRender has produced the image.
-    let screenshot = Rc::new(RefCell::new(None));
-    let callback_screenshot = screenshot.clone();
-    webview.take_screenshot(None, move |result| {
-        *callback_screenshot.borrow_mut() = Some(result);
-    });
+    for attempt in 0..=UNPAINTED_FRAME_RETRIES {
+        let screenshot = Rc::new(RefCell::new(None));
+        let callback_screenshot = screenshot.clone();
+        webview.take_screenshot(None, move |result| {
+            *callback_screenshot.borrow_mut() = Some(result);
+        });
 
-    for _ in 0..FRAME_WAIT_STEPS {
-        servo.spin_event_loop();
-        webview.paint();
-        if let Some(result) = screenshot.borrow_mut().take() {
-            return result
-                .map(DynamicImage::ImageRgba8)
-                .map_err(|error| anyhow::anyhow!("capture Servo screenshot: {error:?}"));
+        let mut received_screenshot = false;
+        for _ in 0..FRAME_WAIT_STEPS {
+            servo.spin_event_loop();
+            webview.paint();
+            if let Some(result) = screenshot.borrow_mut().take() {
+                received_screenshot = true;
+                let image = result
+                    .map(DynamicImage::ImageRgba8)
+                    .map_err(|error| anyhow::anyhow!("capture Servo screenshot: {error:?}"))?;
+                if attempt == UNPAINTED_FRAME_RETRIES || !is_probably_unpainted_surface(&image) {
+                    return Ok(image);
+                }
+                thread::sleep(UNPAINTED_FRAME_RETRY_INTERVAL);
+                break;
+            }
+            thread::sleep(FRAME_WAIT_INTERVAL);
         }
-        thread::sleep(FRAME_WAIT_INTERVAL);
+        if !received_screenshot {
+            bail!("timed out waiting for a Servo screenshot");
+        }
     }
     bail!("timed out waiting for a Servo screenshot")
+}
+
+/// Return true for the white or transparent, uniform clear surface that an
+/// offscreen renderer can expose before it has painted its first document
+/// frame. Sampling avoids walking every pixel of a large screenshot on each
+/// regular redraw. A genuine mostly-white page normally includes text, rules,
+/// or controls at one of these points; even a fully blank white document only
+/// incurs the short startup retry before it is shown.
+fn is_probably_unpainted_surface(image: &DynamicImage) -> bool {
+    let width = image.width();
+    let height = image.height();
+    if width == 0 || height == 0 {
+        return true;
+    }
+    let reference = image.get_pixel(0, 0);
+    let transparent = reference[3] == 0;
+    let nearly_white = reference[0] >= 250 && reference[1] >= 250 && reference[2] >= 250;
+    if !transparent && !nearly_white {
+        return false;
+    }
+    for y in [0, height / 4, height / 2, height.saturating_sub(1)] {
+        for x in [0, width / 4, width / 2, width.saturating_sub(1)] {
+            let pixel = image.get_pixel(x, y);
+            if transparent {
+                if pixel[3] != 0 {
+                    return false;
+                }
+            } else if pixel[3] == 0 || pixel[0] < 250 || pixel[1] < 250 || pixel[2] < 250 {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn wait_for_navigation_frame(
@@ -1437,6 +1507,9 @@ fn wait_for_navigation_frame(
     previous_frame_serial: usize,
     expected_url: Option<Url>,
 ) -> Result<()> {
+    rendering_context
+        .make_current()
+        .map_err(|error| anyhow::anyhow!("make Servo context current for navigation: {error:?}"))?;
     let bounds = DeviceIntRect::new(
         DeviceIntPoint::zero(),
         DeviceIntPoint::new(viewport.width as i32, viewport.height as i32),
@@ -1556,8 +1629,12 @@ fn terminal_cell_to_viewport_point(
 
 #[cfg(test)]
 mod tests {
-    use super::{browser_viewport, terminal_cell_to_viewport_point, BrowserViewport};
+    use super::{
+        browser_viewport, is_probably_unpainted_surface, terminal_cell_to_viewport_point,
+        BrowserViewport,
+    };
     use crate::render::{RenderSize, TerminalCellPixels};
+    use image::{DynamicImage, Rgba, RgbaImage};
 
     #[test]
     fn click_coordinates_use_terminal_cell_centers() {
@@ -1618,5 +1695,21 @@ mod tests {
                 height: 408,
             }
         );
+    }
+
+    #[test]
+    fn white_clear_surface_is_retried_but_document_content_is_not() {
+        let white =
+            DynamicImage::ImageRgba8(RgbaImage::from_pixel(8, 8, Rgba([255, 255, 255, 255])));
+        assert!(is_probably_unpainted_surface(&white));
+
+        let transparent = DynamicImage::ImageRgba8(RgbaImage::from_pixel(8, 8, Rgba([0, 0, 0, 0])));
+        assert!(is_probably_unpainted_surface(&transparent));
+
+        let mut page = RgbaImage::from_pixel(8, 8, Rgba([255, 255, 255, 255]));
+        page.put_pixel(4, 4, Rgba([20, 40, 60, 255]));
+        assert!(!is_probably_unpainted_surface(&DynamicImage::ImageRgba8(
+            page
+        )));
     }
 }

@@ -76,9 +76,9 @@ target/debug/fpasobrowser --capture-only --viewport 1200x800 \
 file /tmp/fpasobrowser-check.png
 ```
 
-次に実際のterminal画面を確認します。引数を省略した既定backendは `kitty` であり、fpasotermまたは
-Kitty Graphics Protocol対応terminalに適しています。対応しないterminalでは、低解像度ですが
-`--backend half-block` を明示指定します。
+次に実際のterminal画面を確認します。引数を省略した既定backendはLinux/macOSでは `kitty`、Windowsでは
+`half-block` です。fpasotermまたはKitty Graphics Protocol対応terminalで高解像度表示を使う場合は
+`--backend kitty` を明示指定します。
 
 ```sh
 ./bin/fpasobrowser \
@@ -120,9 +120,10 @@ fpasobrowser --backend sixel --sixel-cell-size 8x17 https://example.com/
 fpasobrowser https://example.com/
 ```
 
-引数を省略した既定backendは、Kitty Graphics ProtocolでPNGを転送する `kitty` です。
-明示的な `--backend auto` は現在も互換性優先の `half-block` を選び、truecolor端末で使えますが
-解像感は低くなります。`sixel` はSIXEL対応terminal向けに216色SIXEL streamを出力します。
+引数を省略した既定backendはLinux/macOSではKitty Graphics ProtocolでPNGを転送する `kitty`、Windowsでは
+portableな `half-block` です。WindowsのfpasotermでKitty画像表示を使う場合は `--backend kitty` を明示指定します。
+明示的な `--backend auto` も現在は互換性優先の `half-block` を選び、truecolor端末で使えますが解像感は低くなります。
+`sixel` はSIXEL対応terminal向けに216色SIXEL streamを出力します。
 既定ではfpasotermのLinux/ChromeOS gridとmouse座標に合う8×17 pixel cellを使い、Servoのdynamic
 viewportも同じ寸法にします。これによりSIXEL rendererでの二重拡大を避けます。異なるphysical cell
 寸法のterminalでは `--sixel-cell-size WIDTHxHEIGHT` または環境変数
@@ -138,8 +139,8 @@ fpasobrowserはHerdr pluginを必要とせず、通常のHerdr pane内で次の�
 ```
 
 現在確認できるHerdr sourceではKitty Graphicsが既定で有効で、mouse reportingもpane applicationへ
-転送する実装があります。そのため、outer terminalもKitty Graphicsに対応していれば、既定の`kitty`
-backendを試す対象です。明示的に設定する場合はHerdr configで次を指定し、server restartまたはclient
+転送する実装があります。そのため、outer terminalもKitty Graphicsに対応していれば、`--backend kitty`
+を試す対象です（Linux/macOSでは既定、Windowsでは明示指定）。明示的に設定する場合はHerdr configで次を指定し、server restartまたはclient
 reattachを行います。
 
 ```toml
