@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fpasobrowser interaction test</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, sans-serif;
+      background: #10141c;
+      color: #f5f7fb;
+    }
+    body {
+      margin: 0;
+      padding: 32px;
+      line-height: 1.5;
+    }
+    main {
+      max-width: 840px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 48px;
+      margin: 0 0 16px;
+    }
+    .card {
+      background: #1c2433;
+      border: 2px solid #4c8dff;
+      border-radius: 18px;
+      padding: 24px;
+      margin: 20px 0;
+      box-shadow: 0 12px 32px #0008;
+    }
+    label {
+      display: block;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    input {
+      box-sizing: border-box;
+      width: 100%;
+      font-size: 28px;
+      padding: 14px 16px;
+      border-radius: 12px;
+      /* Keep the resting control neutral so the focus indicator is one
+         unambiguous cyan ring even after SIXEL palette quantisation. */
+      border: 2px solid #9ca3af;
+      background: #f7fbff;
+      color: #111827;
+    }
+    input:focus, button:focus, a.button:focus {
+      outline: 3px solid #21d4fd;
+      outline-offset: 3px;
+    }
+    button, a.button {
+      display: inline-block;
+      margin: 12px 12px 0 0;
+      padding: 14px 20px;
+      border-radius: 999px;
+      border: 0;
+      background: #ffcc33;
+      color: #1a1a1a;
+      font-weight: 800;
+      font-size: 22px;
+      text-decoration: none;
+    }
+    button:hover, a.button:hover {
+      background: #ffe27a;
+      cursor: pointer;
+      transform: translateY(-2px);
+    }
+    #result {
+      min-height: 36px;
+      font-size: 28px;
+      color: #8fffc1;
+      font-weight: 800;
+    }
+    .image-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    .tile {
+      height: 140px;
+      border-radius: 18px;
+      display: grid;
+      place-items: center;
+      font-size: 32px;
+      font-weight: 900;
+    }
+    .one { background: linear-gradient(135deg, #ff4d6d, #ffcc33); }
+    .two { background: linear-gradient(135deg, #4c8dff, #93ffdf); color: #04101f; }
+    .three { background: linear-gradient(135deg, #9b5cff, #ff8bd1); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>fpasobrowser interaction test</h1>
+    <p>このページはbot対策なしで、click / keyboard / link hint / scroll を確認するためのローカル検証ページです。input mode中のfocus対象は水色の枠で確認できます。</p>
+
+    <section class="card">
+      <label for="query">Input test</label>
+      <input id="query" placeholder="click, press i, type text, then Enter">
+      <button id="copy">Show typed text</button>
+      <p id="result">Result appears here.</p>
+    </section>
+
+    <section class="card">
+      <h2>Link hint targets</h2>
+      <a class="button" href="#section-a">Go section A</a>
+      <a class="button" href="#section-b">Go section B</a>
+      <a class="button" href="history-a.html">Open history navigation test</a>
+      <a class="button" href="iframe.html">Open iframe input test</a>
+      <a class="button" href="popup.html" target="_blank">Open popup terminal tab</a>
+      <button onclick="window.open('popup.html', '_blank');">Open JS popup terminal tab</button>
+      <button onclick="document.querySelector('#result').textContent = 'Button clicked';">Click me</button>
+    </section>
+
+    <section class="card">
+      <h2>Image-like visual blocks</h2>
+      <div class="image-row">
+        <div class="tile one">RED</div>
+        <div class="tile two">BLUE</div>
+        <div class="tile three">PINK</div>
+      </div>
+    </section>
+
+    <section id="section-a" class="card">
+      <h2>Section A</h2>
+      <p>Scroll and link hint destination A.</p>
+    </section>
+
+    <section id="section-b" class="card">
+      <h2>Section B</h2>
+      <p>Scroll and link hint destination B.</p>
+    </section>
+  </main>
+  <script>
+    const input = document.querySelector('#query');
+    const result = document.querySelector('#result');
+    document.querySelector('#copy').addEventListener('click', () => {
+      result.textContent = `Typed: ${input.value || '(empty)'}`;
+    });
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        result.textContent = `Entered: ${input.value || '(empty)'}`;
+      }
+    });
+  </script>
+</body>
+</html>

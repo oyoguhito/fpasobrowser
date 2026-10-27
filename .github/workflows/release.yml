@@ -1,0 +1,164 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, for example v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  source:
+    name: Source artifact
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Verify release tag
+        shell: bash
+        run: |
+          release_tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          package_version="$(awk -F '"' '$1 ~ /^version[[:space:]]*=/ { print $2; exit }' Cargo.toml)"
+          test "${release_tag#v}" = "$package_version"
+
+      - name: Create source archive
+        shell: bash
+        run: |
+          release_tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          mkdir -p artifacts
+          git archive --format=tar.gz --prefix="fpasobrowser-${release_tag#v}/" HEAD \
+            > "artifacts/fpasobrowser-${release_tag}-source.tar.gz"
+
+      - name: Upload source artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: fpasobrowser-source
+          path: artifacts/*
+          if-no-files-found: error
+          compression-level: 0
+
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    env:
+      # WebRender's shader generator needs a spare Cargo jobserver token during
+      # a cold Servo build; one or two jobs can stall it.
+      CARGO_BUILD_JOBS: 3
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x64
+            os: ubuntu-latest
+          - label: macos-arm64
+            os: macos-latest
+          - label: windows-x64
+            os: windows-latest
+    steps:
+      - name: Checkout release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Python for Servo Stylo
+        if: runner.os == 'Windows'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Enable compiler cache
+        uses: mozilla-actions/sccache-action@v0.0.11
+
+      - name: Install Linux linker
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # Servo's font stack links against system Fontconfig on Linux.
+          # `libfontconfig1-dev` supplies the fontconfig.pc file required by
+          # yeslogic-fontconfig-sys during the release build.
+          sudo apt-get install -y clang mold libfontconfig1-dev
+
+      - name: Cache Cargo target and registry
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: Verify release tag
+        shell: bash
+        run: |
+          release_tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          package_version="$(awk -F '"' '$1 ~ /^version[[:space:]]*=/ { print $2; exit }' Cargo.toml)"
+          test "${release_tag#v}" = "$package_version"
+
+      - name: Build release binary
+        run: cargo build --locked --release
+
+      - name: Stage Windows ANGLE runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/prepare-windows-runtime.ps1 -Profile release
+
+      - name: Render Windows built-in start page
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/test-windows-start-page.ps1 -Profile release
+
+      - name: Package platform artifact
+        shell: bash
+        run: bash scripts/package-artifact.sh "${{ matrix.label }}"
+
+      - name: Upload platform artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: fpasobrowser-${{ matrix.label }}
+          path: artifacts/*
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [source, build]
+    steps:
+      - name: Download release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --dir release-artifacts
+
+      - name: Create or update release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          mapfile -d '' assets < <(find release-artifacts -type f -print0)
+          test "${#assets[@]}" -gt 0
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$release_tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$release_tag" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$release_tag" \
+              --generate-notes \
+              --verify-tag
+          fi
