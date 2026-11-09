@@ -76,6 +76,36 @@ if ($needsBuild) {
         Write-Error "If Python is outside PATH, set PYTHON3 to its python.exe path before building. A release binary does not require Python."
         exit 127
     }
+    # Servo's Windows ANGLE build uses bindgen. The official LLVM installer
+    # puts libclang.dll in Program Files\LLVM\bin, but does not always make
+    # that directory available to the current PowerShell session. Prefer a
+    # caller-supplied path, then the LLVM default and the clang.exe directory.
+    $libclangCandidates = @()
+    if ($env:LIBCLANG_PATH) {
+        $libclangCandidates += $env:LIBCLANG_PATH
+    }
+    if ($env:ProgramFiles) {
+        $libclangCandidates += (Join-Path $env:ProgramFiles "LLVM\bin")
+    }
+    $clangCommand = Get-Command clang.exe -ErrorAction SilentlyContinue
+    if (-not $clangCommand) {
+        $clangCommand = Get-Command clang -ErrorAction SilentlyContinue
+    }
+    if ($clangCommand) {
+        $libclangCandidates += (Split-Path -Parent $clangCommand.Source)
+    }
+    $libclangDirectory = $libclangCandidates |
+        Where-Object {
+            $_ -and (Test-Path -LiteralPath (Join-Path $_ "libclang.dll") -PathType Leaf)
+        } |
+        Select-Object -First 1
+    if (-not $libclangDirectory) {
+        Write-Error "fpasobrowser: a source build of embedded Servo requires LLVM libclang.dll for bindgen."
+        Write-Error "Install LLVM (for example: winget install --id LLVM.LLVM --exact), reopen PowerShell, then run this launcher again."
+        Write-Error "For a custom LLVM installation, set LIBCLANG_PATH to the directory containing libclang.dll. A release binary does not require LLVM."
+        exit 127
+    }
+    $env:LIBCLANG_PATH = $libclangDirectory
     Write-Host "fpasobrowser: building the local debug binary (first build can take a while)..."
     Push-Location $repoDir
     try {

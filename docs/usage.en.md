@@ -16,29 +16,33 @@ the `[URL]` toolbar control to enter an address, or pass it directly:
 ./bin/fpasobrowser https://example.com/
 ```
 
-## Windows native: source-build prerequisite
+## Windows native: source-build prerequisites
 
 The release binary does not require Chromium, Firefox, a separate Servo
 executable, or Python. A source build is different: Servo's Stylo CSS build
-step needs Python 3 while Cargo compiles it. Python is a build prerequisite,
-not a browser runtime dependency.
+step needs Python 3 while Cargo compiles it, and the ANGLE build needs LLVM's
+`libclang.dll` through bindgen. These are build prerequisites, not browser
+runtime dependencies.
 
-Install Rust stable and Python 3, reopen PowerShell, then use the checkout
-launcher:
+Install Rust stable, Python 3, and LLVM, reopen PowerShell, then use the
+checkout launcher:
 
 ```powershell
 winget install Rustlang.Rustup
 winget install Python.Python.3.12
+winget install --id LLVM.LLVM --exact
 cd C:\path\to\fpasobrowser
 ./bin/fpasobrowser.ps1 --version
 ```
 
-The launcher detects `python.exe` or the Windows `py` launcher and sets
-`PYTHON3` for Stylo. For a direct `cargo build`, use an absolute Python path if
-it is not on `PATH`:
+The launcher detects `python.exe` or the Windows `py` launcher, then finds
+`libclang.dll` in LLVM's standard install directory and sets `PYTHON3` and
+`LIBCLANG_PATH`. For a direct `cargo build`, use absolute paths if either tool
+is not on `PATH`:
 
 ```powershell
 $env:PYTHON3 = 'C:\path\to\python.exe'
+$env:LIBCLANG_PATH = 'C:\path\to\LLVM\bin'
 cargo build --locked
 ```
 

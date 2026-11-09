@@ -51,28 +51,32 @@ cd /home/oyoguhito/github/oyoguhito/fpasobrowser
 newer, then directly executes it. Subsequent launches do not invoke `cargo
 run`. On Windows PowerShell use `./bin/fpasobrowser.ps1 --version` instead.
 
-## Windows native: source-build prerequisite
+## Windows native: source-build prerequisites
 
 The released Windows binary needs neither an external browser nor Python. A
-**source build** embeds Servo, whose Stylo CSS build step requires Python 3 at
-build time. It is not a runtime browser dependency.
+**source build** embeds Servo. Its Stylo CSS build step requires Python 3 and
+its ANGLE build uses LLVM's `libclang.dll` through bindgen. Neither is a
+runtime browser dependency.
 
-Install Rust stable and Python 3, reopen PowerShell so PATH is refreshed, then
-use the launcher:
+Install Rust stable, Python 3, and LLVM. Reopen PowerShell so the new tools are
+visible, then use the launcher:
 
 ```powershell
 winget install Rustlang.Rustup
 winget install Python.Python.3.12
+winget install --id LLVM.LLVM --exact
 cd C:\path\to\fpasobrowser
 ./bin/fpasobrowser.ps1 --version
 ```
 
-The launcher locates `python.exe` or the Windows `py` launcher and supplies
-the required `PYTHON3` value automatically. If Python is installed in a custom
-location, set it explicitly before a direct Cargo build:
+The launcher locates `python.exe` or the Windows `py` launcher, then locates
+`libclang.dll` in the standard LLVM install directory and supplies the required
+`PYTHON3` and `LIBCLANG_PATH` values automatically. If either tool is installed
+in a custom location, set it explicitly before a direct Cargo build:
 
 ```powershell
 $env:PYTHON3 = 'C:\path\to\python.exe'
+$env:LIBCLANG_PATH = 'C:\path\to\LLVM\bin'
 cargo build --locked
 ```
 

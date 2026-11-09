@@ -50,6 +50,20 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install LLVM libclang for Servo bindgen
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          winget install --id LLVM.LLVM --exact --silent --accept-package-agreements --accept-source-agreements
+          if ($LASTEXITCODE -ne 0) {
+            throw "winget could not install LLVM.LLVM (exit code $LASTEXITCODE)."
+          }
+          $llvmBin = Join-Path $env:ProgramFiles "LLVM\bin"
+          if (-not (Test-Path -LiteralPath (Join-Path $llvmBin "libclang.dll") -PathType Leaf)) {
+            throw "LLVM was installed but libclang.dll was not found in $llvmBin."
+          }
+          "LIBCLANG_PATH=$llvmBin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Enable compiler cache
         uses: mozilla-actions/sccache-action@v0.0.11
 

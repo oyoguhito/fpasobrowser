@@ -19,23 +19,26 @@ URLを省略すると、組み込みのstart pageを表示します。`g`また�
 ## Windows native: source buildの前提条件
 
 release binaryはChromium、Firefox、別途のServo実行ファイル、Pythonを必要としません。一方、sourceから
-buildする場合はServoのStylo CSS build stepがCargoによるcompile中にPython 3を使います。Pythonはbrowserの
-実行時依存ではなく、build時だけの前提条件です。
+buildする場合はServoのStylo CSS build stepがCargoによるcompile中にPython 3を使い、ANGLE buildはbindgenを
+通じてLLVMの`libclang.dll`を使います。どちらもbrowserの実行時依存ではなく、build時だけの前提条件です。
 
-Rust stableとPython 3を導入し、PATHを更新するためPowerShellを開き直してからcheckout launcherを使います。
+Rust stable、Python 3、LLVMを導入し、PATHを更新するためPowerShellを開き直してからcheckout launcherを使います。
 
 ```powershell
 winget install Rustlang.Rustup
 winget install Python.Python.3.12
+winget install --id LLVM.LLVM --exact
 cd C:\path\to\fpasobrowser
 ./bin/fpasobrowser.ps1 --version
 ```
 
-launcherは`python.exe`またはWindowsの`py` launcherを検出し、Stylo用の`PYTHON3`を設定します。Pythonが
-`PATH`外にある場合に`cargo build`を直接実行するには、絶対pathを指定します。
+launcherは`python.exe`またはWindowsの`py` launcherを検出し、標準LLVM install directoryの`libclang.dll`を
+見つけて`PYTHON3`と`LIBCLANG_PATH`を設定します。PythonまたはLLVMが`PATH`外・標準外にある場合に`cargo build`を
+直接実行するには、絶対pathを指定します。
 
 ```powershell
 $env:PYTHON3 = 'C:\path\to\python.exe'
+$env:LIBCLANG_PATH = 'C:\path\to\LLVM\bin'
 cargo build --locked
 ```
 
