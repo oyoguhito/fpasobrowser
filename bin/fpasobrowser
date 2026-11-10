@@ -9,15 +9,135 @@ repo_dir="$(CDPATH= cd -- "$script_dir/.." && pwd)"
 binary="${FPASOBROWSER_BINARY:-$repo_dir/target/debug/fpasobrowser}"
 cargo_command="${CARGO:-cargo}"
 
+doctor_missing=false
+
+needs_local_build() {
+    if [[ ! -x "$binary" ]]; then
+        return 0
+    fi
+    if [[ "$repo_dir/Cargo.toml" -nt "$binary" || "$repo_dir/Cargo.lock" -nt "$binary" || "$repo_dir/build.rs" -nt "$binary" ]]; then
+        return 0
+    fi
+    if [[ -f "$repo_dir/.cargo/config.toml" && "$repo_dir/.cargo/config.toml" -nt "$binary" ]]; then
+        return 0
+    fi
+    if find "$repo_dir/src" -type f -newer "$binary" -print -quit | grep -q .; then
+        return 0
+    fi
+    return 1
+}
+
+doctor_ok() {
+    printf '  OK      %s\n' "$1" >&2
+}
+
+doctor_missing_item() {
+    printf '  MISSING %s\n' "$1" >&2
+    doctor_missing=true
+}
+
+run_doctor() {
+    printf '%s\n' 'fpasobrowser doctor (source checkout)' >&2
+    printf 'platform: %s\n' "$(uname -s)" >&2
+    printf '%s\n' 'Cargo reports Rust dependencies, but it cannot diagnose native build prerequisites before Servo starts compiling.' >&2
+
+    if [[ "$needs_build" == false ]]; then
+        printf '%s\n' '  INFO    a current local binary exists; Rust/Python/LLVM source-build tools are not required to launch it.' >&2
+    else
+        if command -v "$cargo_command" >/dev/null 2>&1; then
+            doctor_ok "Cargo: $("$cargo_command" --version 2>/dev/null || printf 'available')"
+        else
+            standard_cargo="${CARGO_HOME:-$HOME/.cargo}/bin/cargo"
+            if [[ "$cargo_command" == "cargo" && -x "$standard_cargo" ]]; then
+                doctor_ok "Cargo: $standard_cargo"
+            else
+                doctor_missing_item 'Cargo / Rust stable. Install Rust from https://rustup.rs/.'
+            fi
+        fi
+    fi
+
+    case "$(uname -s)" in
+        Linux)
+            if [[ "$needs_build" == false ]]; then
+                :
+            elif command -v python3 >/dev/null 2>&1; then
+                doctor_ok "Python 3: $(command -v python3)"
+            else
+                doctor_missing_item 'Python 3 for Servo source builds. Debian/Ubuntu/ChromeOS Linux: sudo apt install python3'
+            fi
+            if [[ "$needs_build" == false ]]; then
+                :
+            elif command -v clang >/dev/null 2>&1; then
+                doctor_ok "clang linker: $(command -v clang)"
+            else
+                doctor_missing_item 'clang linker. Debian/Ubuntu/ChromeOS Linux: sudo apt install clang'
+            fi
+            if [[ "$needs_build" == false ]]; then
+                :
+            elif [[ -x /usr/bin/mold ]] || command -v mold >/dev/null 2>&1; then
+                doctor_ok "mold linker: $(command -v mold 2>/dev/null || printf /usr/bin/mold)"
+            else
+                doctor_missing_item 'mold linker. Debian/Ubuntu/ChromeOS Linux: sudo apt install mold'
+            fi
+            if [[ "$needs_build" == false ]]; then
+                :
+            elif command -v pkg-config >/dev/null 2>&1 && pkg-config --exists fontconfig; then
+                doctor_ok 'fontconfig development files'
+            else
+                doctor_missing_item 'fontconfig development files. Debian/Ubuntu/ChromeOS Linux: sudo apt install pkg-config libfontconfig1-dev'
+            fi
+            if [[ -x "$binary" ]]; then
+                if command -v ldd >/dev/null 2>&1; then
+                    missing_libraries="$(ldd "$binary" 2>/dev/null | sed -n 's/^[[:space:]]*\([^[:space:]]*\)[[:space:]]*=> not found.*/\1/p')"
+                    if [[ -n "$missing_libraries" ]]; then
+                        doctor_missing_item "runtime shared libraries: $(printf '%s' "$missing_libraries" | tr '\n' ' ')"
+                    else
+                        doctor_ok "runtime shared libraries for $binary"
+                    fi
+                else
+                    printf '%s\n' '  WARN    ldd is unavailable; skipped runtime shared-library check.' >&2
+                fi
+            else
+                printf '%s\n' '  INFO    no built binary yet; runtime shared-library check will run after the first successful build.' >&2
+            fi
+            ;;
+        Darwin)
+            if [[ "$needs_build" == false ]]; then
+                :
+            elif xcode-select -p >/dev/null 2>&1; then
+                doctor_ok "Xcode command-line tools: $(xcode-select -p)"
+            else
+                doctor_missing_item 'Xcode Command Line Tools. Run: xcode-select --install'
+            fi
+            if [[ "$needs_build" == false ]]; then
+                :
+            elif command -v python3 >/dev/null 2>&1; then
+                doctor_ok "Python 3: $(command -v python3)"
+            else
+                doctor_missing_item 'Python 3 for Servo source builds. Install Python 3, then rerun this command.'
+            fi
+            ;;
+        *)
+            printf '%s\n' '  INFO    no platform-specific source-build checks are defined for this Unix platform.' >&2
+            ;;
+    esac
+
+    if [[ "$doctor_missing" == true ]]; then
+        printf '%s\n' 'result: prerequisites are missing; install the listed items, then rerun bin/fpasobrowser --doctor.' >&2
+        return 1
+    fi
+    printf '%s\n' 'result: source-build prerequisites look ready.' >&2
+    return 0
+}
+
 needs_build=false
-if [[ ! -x "$binary" ]]; then
+if needs_local_build; then
     needs_build=true
-elif [[ "$repo_dir/Cargo.toml" -nt "$binary" || "$repo_dir/Cargo.lock" -nt "$binary" || "$repo_dir/build.rs" -nt "$binary" ]]; then
-    needs_build=true
-elif [[ -f "$repo_dir/.cargo/config.toml" && "$repo_dir/.cargo/config.toml" -nt "$binary" ]]; then
-    needs_build=true
-elif find "$repo_dir/src" -type f -newer "$binary" -print -quit | grep -q .; then
-    needs_build=true
+fi
+
+if [[ "${1:-}" == "--doctor" && "$#" -eq 1 ]]; then
+    run_doctor
+    exit $?
 fi
 
 if [[ "$needs_build" == true ]]; then

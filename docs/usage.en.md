@@ -16,6 +16,26 @@ the `[URL]` toolbar control to enter an address, or pass it directly:
 ./bin/fpasobrowser https://example.com/
 ```
 
+## Diagnostics
+
+Use the checkout launcher before the first source build. It checks tools and
+native development files *before* Cargo begins compiling Servo, which is the
+stage where Cargo's error text otherwise comes from a dependency such as
+bindgen rather than from fpasobrowser:
+
+```sh
+./bin/fpasobrowser --doctor
+```
+
+```powershell
+.\bin\fpasobrowser.ps1 --doctor
+```
+
+The already-built executable also supports `fpasobrowser --doctor`. That check
+is for copied runtime files; on Windows it verifies `libEGL.dll` and
+`libGLESv2.dll` beside the executable. If a source build cannot start, use the
+launcher doctor because the Rust executable does not exist yet.
+
 ## Windows native: source-build prerequisites
 
 The release binary does not require Chromium, Firefox, a separate Servo
@@ -35,6 +55,16 @@ cd C:\path\to\fpasobrowser
 ./bin/fpasobrowser.ps1 --version
 ```
 
+If a direct Cargo invocation reports `Unable to find libclang` or says it
+cannot load `libclang.dll`, run the doctor first. The likely repair is:
+
+```powershell
+.\bin\fpasobrowser.ps1 --doctor
+winget install --id LLVM.LLVM --exact
+# Open a new PowerShell window, then use the launcher:
+.\bin\fpasobrowser.ps1
+```
+
 The launcher detects `python.exe` or the Windows `py` launcher, then finds
 `libclang.dll` in LLVM's standard install directory and sets `PYTHON3` and
 `LIBCLANG_PATH`. For a direct `cargo build`, use absolute paths if either tool
@@ -45,6 +75,9 @@ $env:PYTHON3 = 'C:\path\to\python.exe'
 $env:LIBCLANG_PATH = 'C:\path\to\LLVM\bin'
 cargo build --locked
 ```
+
+Direct `cargo build` / `cargo run` bypasses the launcher's automatic
+`PYTHON3`/`LIBCLANG_PATH` setup. Prefer the launcher for a source checkout.
 
 Windows defaults to `half-block`: normal PowerShell and Windows Terminal do
 not display Kitty Graphics. In fpasoterm, request the high-resolution backend

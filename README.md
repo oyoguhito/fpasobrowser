@@ -51,6 +51,22 @@ cd /home/oyoguhito/github/oyoguhito/fpasobrowser
 newer, then directly executes it. Subsequent launches do not invoke `cargo
 run`. On Windows PowerShell use `./bin/fpasobrowser.ps1 --version` instead.
 
+Before the first source build, run the launcher diagnosis. It checks the
+requirements which Cargo cannot explain before it gets far enough to compile
+Servo:
+
+```sh
+./bin/fpasobrowser --doctor
+```
+
+```powershell
+.\bin\fpasobrowser.ps1 --doctor
+```
+
+The built executable also accepts `--doctor`; it checks its installed runtime
+files. On Windows this verifies the adjacent ANGLE files (`libEGL.dll` and
+`libGLESv2.dll`) needed by a copied release executable.
+
 ## Windows native: source-build prerequisites
 
 The released Windows binary needs neither an external browser nor Python. A
@@ -69,6 +85,18 @@ cd C:\path\to\fpasobrowser
 ./bin/fpasobrowser.ps1 --version
 ```
 
+For the error in which Cargo/bindgen says it cannot find `libclang.dll` (as in
+`Unable to find libclang`), do not retry `cargo run` first. Run the doctor;
+it reports the exact missing prerequisite without attempting a build:
+
+```powershell
+.\bin\fpasobrowser.ps1 --doctor
+winget install --id LLVM.LLVM --exact
+# Open a new PowerShell window, then:
+.\bin\fpasobrowser.ps1 --doctor
+.\bin\fpasobrowser.ps1
+```
+
 The launcher locates `python.exe` or the Windows `py` launcher, then locates
 `libclang.dll` in the standard LLVM install directory and supplies the required
 `PYTHON3` and `LIBCLANG_PATH` values automatically. If either tool is installed
@@ -79,6 +107,10 @@ $env:PYTHON3 = 'C:\path\to\python.exe'
 $env:LIBCLANG_PATH = 'C:\path\to\LLVM\bin'
 cargo build --locked
 ```
+
+`cargo run` bypasses the launcher, so Cargo itself will show bindgen's raw
+error if `LIBCLANG_PATH` is not set. Prefer the launcher for a source checkout;
+use direct Cargo only after setting the two environment variables above.
 
 Windows defaults to the portable `half-block` backend because the normal
 PowerShell and Windows Terminal hosts do not display Kitty Graphics. In

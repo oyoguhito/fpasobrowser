@@ -12,6 +12,8 @@ use fpasobrowser::{
     detailed_version_info,
     render::{BackendChoice, TerminalCellPixels},
 };
+#[cfg(target_os = "linux")]
+use std::process::Command;
 use std::{
     io::{self, Write},
     path::PathBuf,
@@ -35,6 +37,12 @@ struct Cli {
     /// Print detailed version/build information and exit.
     #[arg(long)]
     version_info: bool,
+
+    /// Check the embedded Servo runtime files available to this binary and exit.
+    /// For a source checkout that cannot build yet, use bin/fpasobrowser.ps1
+    /// --doctor on Windows or bin/fpasobrowser --doctor on Unix instead.
+    #[arg(long)]
+    doctor: bool,
 
     /// Rendering backend to use. The Windows default is portable half-block; other platforms default to Kitty.
     #[arg(long, value_enum, env = "FPASOBROWSER_BACKEND")]
@@ -85,6 +93,9 @@ fn main() -> Result<()> {
     if cli.version_info {
         print_version_info_and_exit()?;
     }
+    if cli.doctor {
+        return print_runtime_doctor();
+    }
     let capture_only = cli.capture_only;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -123,6 +134,92 @@ fn print_version_info_and_exit() -> Result<()> {
     writeln!(stdout, "{}", version_info()).context("write version information")?;
     stdout.flush().context("flush version information")?;
     std::process::exit(0);
+}
+
+/// Report runtime files which are outside Cargo's dependency resolver.
+///
+/// Cargo can resolve Rust crates and invoke the native build, but it cannot
+/// explain a missing DLL after an already-built Windows executable has been
+/// copied elsewhere.  Keep this check in the binary for release artifacts;
+/// the source-checkout launchers provide the earlier build prerequisite check.
+fn print_runtime_doctor() -> Result<()> {
+    let mut stdout = io::stdout().lock();
+    writeln!(stdout, "fpasobrowser doctor")?;
+    writeln!(stdout, "version: {}", version_info())?;
+    writeln!(
+        stdout,
+        "engine: embedded Servo (no external browser required)"
+    )?;
+
+    let executable = std::env::current_exe().context("locate fpasobrowser executable")?;
+    writeln!(stdout, "executable: {}", executable.display())?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let directory = executable
+            .parent()
+            .context("locate fpasobrowser executable directory")?;
+        let mut missing = Vec::new();
+        for name in ["libEGL.dll", "libGLESv2.dll"] {
+            let path = directory.join(name);
+            if path.is_file() {
+                writeln!(stdout, "runtime {name}: OK ({})", path.display())?;
+            } else {
+                writeln!(
+                    stdout,
+                    "runtime {name}: MISSING (expected beside fpasobrowser.exe)"
+                )?;
+                missing.push(name);
+            }
+        }
+        if !missing.is_empty() {
+            anyhow::bail!(
+                "Windows ANGLE runtime is incomplete. Re-extract the complete release archive, or run scripts/prepare-windows-runtime.ps1 after a source build."
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        match Command::new("ldd").arg(&executable).output() {
+            Ok(output) if output.status.success() => {
+                let ldd_output = String::from_utf8_lossy(&output.stdout);
+                let missing: Vec<_> = ldd_output
+                    .lines()
+                    .filter(|line| line.contains("=> not found"))
+                    .collect();
+                if missing.is_empty() {
+                    writeln!(stdout, "runtime shared libraries: OK")?;
+                } else {
+                    for line in missing {
+                        writeln!(stdout, "runtime shared library: MISSING ({line})")?;
+                    }
+                    anyhow::bail!(
+                        "the embedded Servo binary has missing Linux shared libraries; see bin/fpasobrowser --doctor for source-build guidance"
+                    );
+                }
+            }
+            Ok(output) => writeln!(
+                stdout,
+                "runtime shared libraries: unable to inspect (ldd exited {})",
+                output.status
+            )?,
+            Err(error) => writeln!(
+                stdout,
+                "runtime shared libraries: unable to run ldd ({error})"
+            )?,
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    writeln!(
+        stdout,
+        "runtime shared libraries: macOS system frameworks are resolved by the operating system"
+    )?;
+
+    writeln!(stdout, "result: ready")?;
+    stdout.flush().context("flush doctor output")?;
+    Ok(())
 }
 
 async fn run(cli: Cli) -> Result<()> {
@@ -254,6 +351,14 @@ mod tests {
         let url = default_start_page_url().expect("create start page URL");
         assert_eq!(url.scheme(), "data");
         assert!(url.as_str().contains("base64,"));
+    }
+
+    #[test]
+    fn doctor_option_is_parsed_without_starting_servo() {
+        let cli =
+            Cli::try_parse_from(["fpasobrowser", "--doctor"]).expect("parse doctor invocation");
+        assert!(cli.doctor);
+        assert!(cli.url.is_none());
     }
 
     #[test]

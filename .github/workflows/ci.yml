@@ -81,6 +81,16 @@ jobs:
         with:
           workspaces: . -> target
 
+      - name: Diagnose source-build prerequisites
+        shell: bash
+        if: runner.os != 'Windows'
+        run: ./bin/fpasobrowser --doctor
+
+      - name: Diagnose Windows source-build prerequisites
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./bin/fpasobrowser.ps1 --doctor
+
       - name: Format
         run: cargo fmt --all -- --check
 

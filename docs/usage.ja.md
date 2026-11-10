@@ -16,6 +16,24 @@ URLを省略すると、組み込みのstart pageを表示します。`g`また�
 ./bin/fpasobrowser https://example.com/
 ```
 
+## 診断
+
+source buildの前にcheckout launcherで診断できます。CargoがServoのcompileを開始する前に、Cargoだけでは
+説明できないnative development toolを確認します。依存crateのbindgen等が出す生のerrorではなく、導入すべき
+ものを表示するための入口です。
+
+```sh
+./bin/fpasobrowser --doctor
+```
+
+```powershell
+.\bin\fpasobrowser.ps1 --doctor
+```
+
+build済みbinaryも`fpasobrowser --doctor`に対応します。これはコピー後のruntime file確認用で、Windowsでは
+実行fileと同じdirectoryの`libEGL.dll`、`libGLESv2.dll`を確認します。source buildそのものが始められない
+ときはRust binaryが未生成のため、launcherの`--doctor`を使ってください。
+
 ## Windows native: source buildの前提条件
 
 release binaryはChromium、Firefox、別途のServo実行ファイル、Pythonを必要としません。一方、sourceから
@@ -32,6 +50,16 @@ cd C:\path\to\fpasobrowser
 ./bin/fpasobrowser.ps1 --version
 ```
 
+直接のCargo実行で`Unable to find libclang`や`libclang.dll`を読み込めないというerrorが出た場合は、まず
+`cargo run`を再試行せずdoctorを実行します。通常の修復は次です。
+
+```powershell
+.\bin\fpasobrowser.ps1 --doctor
+winget install --id LLVM.LLVM --exact
+# 新しいPowerShellを開いてからlauncherで起動
+.\bin\fpasobrowser.ps1
+```
+
 launcherは`python.exe`またはWindowsの`py` launcherを検出し、標準LLVM install directoryの`libclang.dll`を
 見つけて`PYTHON3`と`LIBCLANG_PATH`を設定します。PythonまたはLLVMが`PATH`外・標準外にある場合に`cargo build`を
 直接実行するには、絶対pathを指定します。
@@ -41,6 +69,9 @@ $env:PYTHON3 = 'C:\path\to\python.exe'
 $env:LIBCLANG_PATH = 'C:\path\to\LLVM\bin'
 cargo build --locked
 ```
+
+直接の`cargo build`/`cargo run`はlauncherによる`PYTHON3`/`LIBCLANG_PATH`の自動設定を通りません。source
+checkoutではlauncherを優先してください。
 
 Windowsの既定backendは`half-block`です。通常のPowerShellとWindows TerminalはKitty Graphicsを表示できないためです。
 fpasoterm上では高解像度backendを明示指定します。
