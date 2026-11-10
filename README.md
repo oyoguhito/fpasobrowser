@@ -74,6 +74,14 @@ The released Windows binary needs neither an external browser nor Python. A
 its ANGLE build uses LLVM's `libclang.dll` through bindgen. Neither is a
 runtime browser dependency.
 
+## Licenses in release archives
+
+Each binary release archive includes `LICENSE`, `THIRD_PARTY_NOTICES.md`, its
+exact `Cargo.lock`, and a `THIRD_PARTY_LICENSES/` directory collected from the
+resolved crate sources. Keep those files with a redistributed archive. The
+notice identifies MPL-2.0 components and how to obtain their corresponding
+source code.
+
 Install Rust stable, Python 3, and LLVM. Reopen PowerShell so the new tools are
 visible, then use the launcher:
 

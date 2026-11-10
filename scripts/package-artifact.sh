@@ -24,6 +24,8 @@ if [[ ! -f "$binary_path" ]]; then
   exit 1
 fi
 
+bash scripts/collect-third-party-licenses.sh
+
 mkdir -p artifacts
 archive="artifacts/fpasobrowser-v${version}-${label}.tar.gz"
 runtime_files=("$binary")
@@ -37,5 +39,13 @@ if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
     runtime_files+=("$runtime")
   done
 fi
-tar -C target/release -czf "$archive" "${runtime_files[@]}"
+staging_dir="$(mktemp -d "${TMPDIR:-/tmp}/fpasobrowser-package.XXXXXX")"
+trap 'rm -rf -- "$staging_dir"' EXIT
+for runtime_file in "${runtime_files[@]}"; do
+  cp "target/release/$runtime_file" "$staging_dir/"
+done
+cp LICENSE THIRD_PARTY_NOTICES.md Cargo.lock "$staging_dir/"
+cp -R target/release/THIRD_PARTY_LICENSES "$staging_dir/"
+tar -C "$staging_dir" -czf "$archive" \
+  "${runtime_files[@]}" LICENSE THIRD_PARTY_NOTICES.md Cargo.lock THIRD_PARTY_LICENSES
 printf 'created %s\n' "$archive"
