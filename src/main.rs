@@ -44,7 +44,7 @@ struct Cli {
     #[arg(long)]
     doctor: bool,
 
-    /// Rendering backend to use. The Windows default is portable half-block; other platforms default to Kitty.
+    /// Rendering backend to use. The default auto-detects Kitty Graphics and otherwise uses portable half-block.
     #[arg(long, value_enum, env = "FPASOBROWSER_BACKEND")]
     backend: Option<BackendChoice>,
 
@@ -223,7 +223,8 @@ fn print_runtime_doctor() -> Result<()> {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    let backend = cli.backend.unwrap_or_else(default_backend);
+    let backend_selection = select_backend(cli.backend);
+    let backend = backend_selection.choice;
     let url = match cli.url {
         Some(url) => url,
         None => default_start_page_url()?,
@@ -241,23 +242,65 @@ async fn run(cli: Cli) -> Result<()> {
         capture_only: cli.capture_only,
         sixel_cell_pixels: cli.sixel_cell_size,
         ui_chrome: cli.ui,
+        initial_activity: backend_selection.initial_activity,
     };
     app::run(url, backend, options).await
 }
 
-/// Select an image transport that is visible in the ordinary terminal for the
-/// current platform. Windows Terminal and the PowerShell host do not implement
-/// Kitty Graphics, whereas fpasoterm does; callers can explicitly opt into
-/// `--backend kitty` (or `FPASOBROWSER_BACKEND=kitty`) in that host.
-const fn default_backend() -> BackendChoice {
-    #[cfg(target_os = "windows")]
-    {
-        BackendChoice::HalfBlock
+#[derive(Debug, PartialEq, Eq)]
+struct BackendSelection {
+    choice: BackendChoice,
+    initial_activity: Option<String>,
+}
+
+/// Resolve the implicit and `auto` choices before entering raw terminal mode.
+///
+/// Kitty Graphics has no portable, side-effect-free capability query that can
+/// be issued before a TUI takes ownership of terminal input. Use positive
+/// identifiers that are inherited by child processes instead: Kitty exposes
+/// `KITTY_WINDOW_ID`/an `xterm-kitty` TERM and fpasoterm sets
+/// `TERM_PROGRAM=fpasoterm`. Unknown terminals deliberately fall back rather
+/// than receiving opaque Kitty APC escape sequences.
+fn select_backend(requested: Option<BackendChoice>) -> BackendSelection {
+    select_backend_from_environment(requested, |name| std::env::var(name).ok())
+}
+
+fn select_backend_from_environment<F>(
+    requested: Option<BackendChoice>,
+    environment: F,
+) -> BackendSelection
+where
+    F: Fn(&str) -> Option<String>,
+{
+    match requested {
+        Some(choice @ (BackendChoice::HalfBlock | BackendChoice::Sixel | BackendChoice::Kitty)) => {
+            BackendSelection {
+                choice,
+                initial_activity: None,
+            }
+        }
+        None | Some(BackendChoice::Auto) if kitty_graphics_is_advertised(&environment) => {
+            BackendSelection {
+                choice: BackendChoice::Kitty,
+                initial_activity: None,
+            }
+        }
+        None | Some(BackendChoice::Auto) => BackendSelection {
+            choice: BackendChoice::HalfBlock,
+            initial_activity: Some(String::from(
+                "Kitty Graphics not detected; using half-block (use --backend kitty to force)",
+            )),
+        },
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        BackendChoice::Kitty
-    }
+}
+
+fn kitty_graphics_is_advertised<F>(environment: &F) -> bool
+where
+    F: Fn(&str) -> Option<String>,
+{
+    environment("KITTY_WINDOW_ID").is_some_and(|value| !value.trim().is_empty())
+        || environment("TERM").is_some_and(|value| value.eq_ignore_ascii_case("xterm-kitty"))
+        || environment("TERM_PROGRAM").is_some_and(|value| value.eq_ignore_ascii_case("fpasoterm"))
 }
 
 /// Create a portable, self-contained start page for URL-less launches.
@@ -337,10 +380,33 @@ mod tests {
         let cli = Cli::try_parse_from(["fpasobrowser", "https://example.com/"])
             .expect("parse default CLI invocation");
         assert_eq!(cli.backend, None);
-        #[cfg(target_os = "windows")]
-        assert_eq!(default_backend(), BackendChoice::HalfBlock);
-        #[cfg(not(target_os = "windows"))]
-        assert_eq!(default_backend(), BackendChoice::Kitty);
+        let selection = select_backend_from_environment(cli.backend, |_| None);
+        assert_eq!(selection.choice, BackendChoice::HalfBlock);
+        assert!(selection.initial_activity.is_some());
+    }
+
+    #[test]
+    fn auto_backend_prefers_kitty_in_fpasoterm() {
+        let selection = select_backend_from_environment(Some(BackendChoice::Auto), |name| {
+            (name == "TERM_PROGRAM").then(|| String::from("fpasoterm"))
+        });
+        assert_eq!(selection.choice, BackendChoice::Kitty);
+        assert_eq!(selection.initial_activity, None);
+    }
+
+    #[test]
+    fn kitty_environment_is_enough_for_the_implicit_backend() {
+        let selection = select_backend_from_environment(None, |name| {
+            (name == "KITTY_WINDOW_ID").then(|| String::from("42"))
+        });
+        assert_eq!(selection.choice, BackendChoice::Kitty);
+    }
+
+    #[test]
+    fn explicit_backend_is_never_rewritten_by_detection() {
+        let selection = select_backend_from_environment(Some(BackendChoice::Kitty), |_| None);
+        assert_eq!(selection.choice, BackendChoice::Kitty);
+        assert_eq!(selection.initial_activity, None);
     }
 
     #[test]

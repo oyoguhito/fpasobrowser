@@ -112,9 +112,11 @@ cargo build --locked
 error if `LIBCLANG_PATH` is not set. Prefer the launcher for a source checkout;
 use direct Cargo only after setting the two environment variables above.
 
-Windows defaults to the portable `half-block` backend because the normal
-PowerShell and Windows Terminal hosts do not display Kitty Graphics. In
-fpasoterm, select the high-resolution image transport explicitly:
+The omitted backend automatically selects high-resolution `kitty` when the
+terminal advertises it (including fpasoterm), and otherwise selects portable
+`half-block`. In PowerShell or Windows Terminal, the activity line explains
+that Kitty Graphics was not detected. To force a Kitty-capable terminal that
+does not advertise itself, use:
 
 ```powershell
 ./bin/fpasobrowser.ps1 --backend kitty
@@ -136,10 +138,10 @@ target/debug/fpasobrowser --capture-only --viewport 1200x800 \
 file /tmp/fpasobrowser-check.png
 ```
 
-Then test the terminal UI in an interactive terminal. The omitted backend is
-`kitty` on Linux/macOS and portable `half-block` on Windows. In fpasoterm or
-another verified Kitty Graphics Protocol terminal, request high-resolution
-output explicitly with `--backend kitty`.
+Then test the terminal UI in an interactive terminal. The omitted backend
+auto-selects `kitty` in fpasoterm and Kitty, while other terminals receive the
+portable `half-block` fallback with an activity-line explanation. Use
+`--backend kitty` to force a verified compatible terminal that is not detected.
 
 ```sh
 ./bin/fpasobrowser \
@@ -181,11 +183,11 @@ to try in a Herdr pane is:
 ./bin/fpasobrowser
 ```
 
-On Linux and macOS, the default `kitty` backend requires both the Herdr
-server/client and the outer terminal to handle Kitty Graphics correctly. On
-Windows, the omitted backend is the portable `half-block`; request `--backend
-kitty` only after confirming that the fpasoterm/Herdr path renders Kitty
-images. Herdr configuration can explicitly enable it with `[terminal]
+The omitted backend auto-selects `kitty` when fpasoterm or Kitty is detected;
+otherwise it uses the portable `half-block` fallback and explains this in the
+activity line. Kitty still requires both the Herdr server/client and the outer
+terminal to handle graphics correctly. Herdr configuration can explicitly enable
+it with `[terminal]
 kitty_graphics = true`; changing that setting requires a Herdr restart or
 client reattach. If an image is clipped,
 translated into another pane, or mouse input does not reach the viewer, that is
@@ -347,8 +349,8 @@ Controls:
 - PNG/JPEG decode and resizing with `image`
 - URL validation with `url`
 - OS default browser handoff with `open`
-- Default renderer: `kitty` on Linux/macOS; portable ANSI truecolor
-  `half-block` on Windows
+- Default renderer: automatic Kitty detection, with portable ANSI truecolor
+  `half-block` fallback and activity-line notice
 - Explicit fallback renderers: ANSI truecolor + upper half block (`--backend half-block`)
   and SIXEL (`--backend sixel`)
 
@@ -356,10 +358,10 @@ Controls:
 
 | Backend | Status | Characteristics |
 | --- | --- | --- |
-| `auto` | Available | Explicit portable choice; currently resolves to `half-block`. Later it can probe terminal capabilities. |
+| `auto` | Default / available | Selects `kitty` when `KITTY_WINDOW_ID`, `TERM=xterm-kitty`, or fpasoterm's `TERM_PROGRAM=fpasoterm` advertises support; otherwise selects `half-block` and explains the fallback in the activity line. |
 | `half-block` | Available | ANSI truecolor renderer using `▀`. Works in ordinary modern terminals and does not need Kitty/SIXEL/iTerm2 image protocols. Lower fidelity than real image protocols. |
 | `sixel` | Available | Encodes the screenshot as a 216-color SIXEL image. Its default 8×17-pixel cell estimate matches fpasoterm's Linux/ChromeOS terminal grid. Servo's dynamic viewport uses exactly the same geometry, so the screenshot is not enlarged again during SIXEL presentation and mouse coordinates remain aligned while preserving the three UI lines. Use `--sixel-cell-size WIDTHxHEIGHT` (or `FPASOBROWSER_SIXEL_CELL_SIZE`) when another SIXEL terminal uses different physical cell dimensions; the toolbar shows the active value. Full-frame updates are deduplicated, hover redraw is suppressed, and loading is polled at a lower rate so click navigation finishes without idle flicker. |
-| `kitty` | Available; default on Linux/macOS | Sends PNG screenshots through Kitty Graphics Protocol and places them in terminal cells. On Windows, request it explicitly in fpasoterm/another verified Kitty-compatible terminal. |
+| `kitty` | Available | Sends PNG screenshots through Kitty Graphics Protocol and places them in terminal cells. Use it explicitly to force a compatible terminal that does not advertise support. |
 
 ## Documentation
 
@@ -374,8 +376,8 @@ Controls:
   exposed yet.
 - Scrolling currently re-captures the page after moving `window.scrollY`.
 - Image quality with `half-block` is intentionally limited. The omitted
-  backend is `kitty` on Linux/macOS and `half-block` on Windows; Windows users
-  can explicitly select `kitty` in a verified compatible terminal.
+  backend auto-selects `kitty` in detected fpasoterm/Kitty terminals and uses
+  `half-block` with an activity-line notice everywhere else.
 - Windows Terminal does not currently support Kitty Graphics Protocol or SIXEL,
   so native Windows Terminal uses `half-block`. SIXEL-capable Windows terminals
   can use `--backend sixel`.

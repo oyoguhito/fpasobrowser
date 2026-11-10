@@ -73,8 +73,9 @@ cargo build --locked
 直接の`cargo build`/`cargo run`はlauncherによる`PYTHON3`/`LIBCLANG_PATH`の自動設定を通りません。source
 checkoutではlauncherを優先してください。
 
-Windowsの既定backendは`half-block`です。通常のPowerShellとWindows TerminalはKitty Graphicsを表示できないためです。
-fpasoterm上では高解像度backendを明示指定します。
+引数を省略したbackendは、terminalが対応をadvertiseしている場合（fpasotermを含む）に高解像度の`kitty`を自動選択し、
+それ以外ではportableな`half-block`を使います。PowerShellとWindows Terminalではfallback理由をactivity lineに表示します。
+対応しているが自動検出されないterminalで強制するには、次を指定します。
 
 ```powershell
 ./bin/fpasobrowser.ps1 --backend kitty
@@ -110,8 +111,8 @@ target/debug/fpasobrowser --capture-only --viewport 1200x800 \
 file /tmp/fpasobrowser-check.png
 ```
 
-次に実際のterminal画面を確認します。引数を省略した既定backendはLinux/macOSでは `kitty`、Windowsでは
-`half-block` です。fpasotermまたはKitty Graphics Protocol対応terminalで高解像度表示を使う場合は
+次に実際のterminal画面を確認します。引数を省略したbackendはfpasotermとKittyでは`kitty`を自動選択し、
+それ以外ではactivity lineの通知付きでportableな`half-block`を使います。自動検出されない対応terminalでは
 `--backend kitty` を明示指定します。
 
 ```sh
@@ -154,10 +155,10 @@ fpasobrowser --backend sixel --sixel-cell-size 8x17 https://example.com/
 fpasobrowser https://example.com/
 ```
 
-引数を省略した既定backendはLinux/macOSではKitty Graphics ProtocolでPNGを転送する `kitty`、Windowsでは
-portableな `half-block` です。WindowsのfpasotermでKitty画像表示を使う場合は `--backend kitty` を明示指定します。
-明示的な `--backend auto` も現在は互換性優先の `half-block` を選び、truecolor端末で使えますが解像感は低くなります。
-`sixel` はSIXEL対応terminal向けに216色SIXEL streamを出力します。
+引数を省略したbackendと明示的な`--backend auto`は、`KITTY_WINDOW_ID`、`TERM=xterm-kitty`、または
+fpasotermが設定する`TERM_PROGRAM=fpasoterm`でKitty対応を検出すると、PNGを転送する `kitty` を選びます。
+それ以外では解像感は低くなりますがportableな `half-block` を選び、activity lineでfallback理由を表示します。
+自動検出されない対応terminalでは`--backend kitty`を明示指定できます。`sixel` はSIXEL対応terminal向けに216色SIXEL streamを出力します。
 既定ではfpasotermのLinux/ChromeOS gridとmouse座標に合う8×17 pixel cellを使い、Servoのdynamic
 viewportも同じ寸法にします。これによりSIXEL rendererでの二重拡大を避けます。異なるphysical cell
 寸法のterminalでは `--sixel-cell-size WIDTHxHEIGHT` または環境変数
@@ -173,8 +174,8 @@ fpasobrowserはHerdr pluginを必要とせず、通常のHerdr pane内で次の�
 ```
 
 現在確認できるHerdr sourceではKitty Graphicsが既定で有効で、mouse reportingもpane applicationへ
-転送する実装があります。そのため、outer terminalもKitty Graphicsに対応していれば、`--backend kitty`
-を試す対象です（Linux/macOSでは既定、Windowsでは明示指定）。明示的に設定する場合はHerdr configで次を指定し、server restartまたはclient
+転送する実装があります。そのため、outer terminalもKitty Graphicsに対応していれば自動選択で`kitty`を使い、
+未対応時は`half-block`へfallbackします。明示的に設定する場合はHerdr configで次を指定し、server restartまたはclient
 reattachを行います。
 
 ```toml
@@ -297,9 +298,8 @@ Servoの初回buildは大きく、Rustに加えてgraphics、font、TLS、linker
 配布済みfpasobrowser binaryにはengineが組み込まれるため、利用者が別途web browserを導入する
 必要はありません。
 
-高品質なterminal表示には Kitty Graphics Protocol対応端末を使います。Windows Terminalは現在
-このprotocolを実装していないため、native Windowsでは追加のimage backend実装までtruecolor
-half-block rendererを使います。
+高品質なterminal表示には Kitty Graphics Protocol対応端末を使います。自動選択はfpasotermとKittyを識別します。
+Windows Terminalはこのprotocolをadvertiseしないため、truecolor half-block rendererへfallbackし、activity lineで理由を示します。
 
 Linux / ChromeOS Linuxのrepository buildは `.cargo/config.toml` でCargo jobを3本に制限し、
 インストール済みの `/usr/bin/mold` を `clang` 経由で使用します。これはServoの大きなlinkを

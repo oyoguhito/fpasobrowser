@@ -96,6 +96,9 @@ pub struct AppOptions {
     pub sixel_cell_pixels: Option<TerminalCellPixels>,
     /// Controls how many terminal rows remain outside the rendered page.
     pub ui_chrome: UiChrome,
+    /// Explains an automatic terminal-renderer fallback until the user takes
+    /// the next action. Explicitly selected backends do not need this notice.
+    pub initial_activity: Option<String>,
 }
 
 struct RedrawOptions<'a> {
@@ -352,7 +355,10 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
     // event can instead be Drag or Up. Track the sequence locally so the
     // latter becomes one safe fallback activation, never a duplicate click.
     let mut primary_mouse_down = false;
-    let mut message = String::from(DEFAULT_ACTIVITY_MESSAGE);
+    let mut message = options
+        .initial_activity
+        .clone()
+        .unwrap_or_else(|| String::from(DEFAULT_ACTIVITY_MESSAGE));
     let mut loading_frame = 0_u8;
     let mut startup_redraws_remaining = STARTUP_REDRAW_SAMPLES;
 

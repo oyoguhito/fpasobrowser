@@ -122,12 +122,12 @@ below it. Move the pointer freely, then left-click a visible button or input:
 the click must be accepted and its resulting page change must appear after the
 page finishes loading, without repeated full-screen blinking. SIXEL
 intentionally does not redraw cosmetic hover states, so use click, Tab, or
-`i` for interaction feedback. SIXEL is explicit-only: the omitted backend is
-`kitty` on Linux/macOS and `half-block` on Windows, while `--backend auto`
-continues to select the broadly compatible half-block backend. A terminal
-without SIXEL support can show a blank result or literal control data; use
-`--backend kitty` only in a verified Kitty-capable terminal, otherwise use
-`--backend half-block`.
+`i` for interaction feedback. SIXEL is explicit-only. The omitted backend and
+`--backend auto` select `kitty` when Kitty/fpasoterm is advertised and
+otherwise use the broadly compatible half-block backend with an activity-line
+notice. A terminal without SIXEL support can show a blank result or literal
+control data; force a compatible but undetected terminal with `--backend
+kitty`, otherwise use `--backend half-block`.
 
 The CI workflow type-checks the full embedded-Servo application with Clippy,
 then runs the renderer library/integration tests without requiring a graphical

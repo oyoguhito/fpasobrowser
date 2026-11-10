@@ -79,9 +79,11 @@ cargo build --locked
 Direct `cargo build` / `cargo run` bypasses the launcher's automatic
 `PYTHON3`/`LIBCLANG_PATH` setup. Prefer the launcher for a source checkout.
 
-Windows defaults to `half-block`: normal PowerShell and Windows Terminal do
-not display Kitty Graphics. In fpasoterm, request the high-resolution backend
-explicitly:
+The omitted backend automatically uses high-resolution `kitty` when the
+terminal advertises support (including fpasoterm) and otherwise uses portable
+`half-block`. PowerShell and Windows Terminal take the fallback and show the
+reason in the activity line. To force a compatible terminal that does not
+advertise itself, use:
 
 ```powershell
 ./bin/fpasobrowser.ps1 --backend kitty
@@ -119,10 +121,10 @@ target/debug/fpasobrowser --capture-only --viewport 1200x800 \
 file /tmp/fpasobrowser-check.png
 ```
 
-Then test the actual terminal UI. The omitted backend is `kitty` on Linux and
-macOS, and portable `half-block` on Windows. In fpasoterm or another terminal
-that implements Kitty Graphics Protocol, request the higher-fidelity Kitty
-backend explicitly with `--backend kitty`.
+Then test the actual terminal UI. The omitted backend auto-selects `kitty` in
+fpasoterm and Kitty, and uses portable `half-block` with an activity-line
+notice otherwise. Use `--backend kitty` to force a compatible terminal that is
+not detected.
 
 ```sh
 ./bin/fpasobrowser \
@@ -167,12 +169,13 @@ fpasobrowser --backend sixel --sixel-cell-size 8x17 https://example.com/
 fpasobrowser https://example.com/
 ```
 
-The omitted default is `kitty` on Linux/macOS and `half-block` on Windows.
-`kitty` sends the rendered PNG via Kitty Graphics Protocol; in fpasoterm on
-Windows, request it explicitly after verifying that the terminal path supports
-Kitty images. Explicit `auto` also currently selects `half-block`, which works
-in modern truecolor terminals but is visibly lower resolution. `sixel` uses a
-216-color SIXEL stream for SIXEL-capable terminals.
+The omitted default and explicit `auto` select `kitty` when `KITTY_WINDOW_ID`,
+`TERM=xterm-kitty`, or fpasoterm's `TERM_PROGRAM=fpasoterm` advertises it.
+Otherwise they use the portable, visibly lower-resolution `half-block` backend
+and explain the fallback in the activity line. `kitty` sends the rendered PNG
+via Kitty Graphics Protocol; use `--backend kitty` to force a compatible
+terminal that is not detected. `sixel` uses a 216-color SIXEL stream for
+SIXEL-capable terminals.
 Its default 8×17-pixel cell estimate matches fpasoterm's Linux/ChromeOS grid,
 and also sizes Servo's dynamic viewport. That avoids upscaling the screenshot
 again in the SIXEL renderer while preserving status/tab/toolbar rows and
@@ -192,9 +195,9 @@ a Herdr pane:
 
 The current Herdr source enables Kitty Graphics by default and implements
 mouse-report forwarding for pane applications. When the outer terminal also
-supports Kitty Graphics, use `--backend kitty` (it is already the Linux/macOS
-default; Windows keeps the portable half-block default). To explicitly
-configure it, set the following and restart the Herdr server
+supports Kitty Graphics, the automatic selection uses `kitty`; otherwise it
+keeps the portable half-block fallback. To explicitly configure it, set the
+following and restart the Herdr server
 or reattach the client:
 
 ```toml
@@ -348,9 +351,9 @@ binary embeds the engine, so an end user does not install a separate web
 browser.
 
 For high-fidelity terminal output, use a terminal with Kitty Graphics Protocol
-support. Windows Terminal does not currently provide that protocol, so native
-Windows uses the truecolor half-block backend until an additional image
-backend is implemented.
+support. Automatic selection identifies fpasoterm and Kitty; Windows Terminal
+does not advertise the protocol, so it receives the truecolor half-block
+fallback and an activity-line explanation.
 
 On Linux and ChromeOS Linux, the repository's `.cargo/config.toml` limits Cargo
 to one job and uses installed `/usr/bin/mold` through `clang`. This avoids

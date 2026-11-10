@@ -103,9 +103,10 @@ mappingには必ず同じ値が使われます。
 terminalをresizeして画像がviewport内に収まること、画像下のstatus/tab/toolbarの3行が見えることも
 確認します。pointerを動かした後に見えているbuttonまたはinputをleft clickし、全画面点滅を繰り返さず、
 pageのloading完了後にclickによる画面遷移結果が表示されることも確認します。SIXELではcosmetic hover stateを意図的に再描画しないため、
-操作feedbackにはclick、Tab、または`i`を使います。SIXELは明示指定専用であり、引数省略時はLinux/macOSでは `kitty`、Windowsでは
-`half-block` です。`--backend auto` も広く互換性のあるhalf-block backendを選び続けます。SIXEL非対応terminalでは空白または
-literal control dataになる場合があります。Kitty対応を確認できたterminalだけで `--backend kitty` を使い、それ以外では `--backend half-block` を使います。
+操作feedbackにはclick、Tab、または`i`を使います。SIXELは明示指定専用です。引数省略時と`--backend auto`は
+Kitty/fpasoterm対応を検出すると`kitty`を選び、それ以外ではactivity lineの通知付きで広く互換性のあるhalf-block backendを選びます。
+SIXEL非対応terminalでは空白またはliteral control dataになる場合があります。対応しているが自動検出されないterminalでは
+`--backend kitty`を使い、それ以外では`--backend half-block`を使います。
 
 CI workflowでは、Clippyで組み込みServo application全体をtype checkした後、graphical
 desktop sessionを要求せずrenderer library/integration testを実行します。Cargo jobは3本にして、
