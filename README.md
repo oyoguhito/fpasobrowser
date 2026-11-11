@@ -78,9 +78,11 @@ runtime browser dependency.
 
 Each binary release archive includes `LICENSE`, `THIRD_PARTY_NOTICES.md`, its
 exact `Cargo.lock`, and a `THIRD_PARTY_LICENSES/` directory collected from the
-resolved crate sources. Keep those files with a redistributed archive. The
-notice identifies MPL-2.0 components and how to obtain their corresponding
-source code.
+registry crate sources used by that archive's platform build. `Cargo.lock`
+records the complete cross-platform resolution, so an archive need not contain
+sources for crates that do not apply to its platform. Keep those files with a
+redistributed archive. The notice identifies MPL-2.0 components and how to
+obtain their corresponding source code.
 
 Install Rust stable, Python 3, and LLVM. Reopen PowerShell so the new tools are
 visible, then use the launcher:

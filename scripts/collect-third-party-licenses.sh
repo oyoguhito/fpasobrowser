@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Collect license and notice files from every registry crate resolved by the
-# lockfile.  This runs after Cargo has fetched the dependencies, and its output
-# is copied into each binary release archive by package-artifact.sh.
+# Collect license and notice files from registry crate sources that Cargo made
+# available for this platform's release build. Cargo.lock contains one
+# cross-platform resolution, so it also names packages not downloaded for a
+# given platform; those cannot be part of that platform's binary archive.
+# This runs after Cargo has built the dependencies, and its output is copied
+# into each binary release archive by package-artifact.sh.
 
 root_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root_dir"
 
-output_dir="target/release/THIRD_PARTY_LICENSES"
+output_dir="${FPASOBROWSER_THIRD_PARTY_LICENSES_DIR:-target/release/THIRD_PARTY_LICENSES}"
 cargo_home="${CARGO_HOME:-${HOME:-}/.cargo}"
 registry_source_dir="$cargo_home/registry/src"
 
@@ -25,14 +28,17 @@ manifest="$output_dir/README.md"
 cat > "$manifest" <<'EOF'
 # Third-party license files
 
-Generated from the `Cargo.lock` that accompanies this release.  Each directory
-contains license, notice, copying, and copyright files found in the resolved
-crate source.  The package name and version are encoded in its directory name.
-When a crate publishes its license expression only in `Cargo.toml`, that
-manifest is retained instead.
+Generated from registry crate sources available to the platform release build.
+`Cargo.lock` accompanies this archive as the complete, cross-platform version
+inventory; it can name target-specific packages that Cargo does not download
+for this archive. Each directory contains license, notice, copying, and
+copyright files found in a collected crate source. The package name and version
+are encoded in its directory name. When a crate publishes its license
+expression only in `Cargo.toml`, that manifest is retained instead.
 EOF
 
-missing=0
+collected=0
+skipped=0
 while IFS=$'\t' read -r crate_name crate_version; do
   source_dir=""
   for registry in "$registry_source_dir"/*; do
@@ -44,10 +50,14 @@ while IFS=$'\t' read -r crate_name crate_version; do
   done
 
   if [[ -z "$source_dir" ]]; then
-    echo "missing Cargo source for $crate_name $crate_version" >&2
-    missing=1
+    # Cargo only unpacks sources that are needed for the active build target.
+    # Cargo.lock also includes dependency alternatives for other targets; they
+    # are not present in, and therefore not distributed by, this archive.
+    skipped=$((skipped + 1))
     continue
   fi
+
+  collected=$((collected + 1))
 
   destination="$output_dir/$crate_name-$crate_version"
   mkdir -p "$destination"
@@ -83,9 +93,11 @@ done < <(
   ' Cargo.lock | sort -u
 )
 
-if [[ "$missing" -ne 0 ]]; then
+if [[ "$collected" -eq 0 ]]; then
   rm -rf -- "$output_dir"
+  echo "no Cargo crate sources were available to collect from $registry_source_dir" >&2
   exit 1
 fi
 
-printf 'collected third-party license files in %s\n' "$output_dir"
+printf 'collected third-party license files for %d crate source(s) in %s; skipped %d lockfile package(s) not needed by this platform build\n' \
+  "$collected" "$output_dir" "$skipped"
