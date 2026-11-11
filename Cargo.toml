@@ -1,0 +1,58 @@
+[package]
+name = "fpasobrowser"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A terminal web viewer that renders embedded Servo frames through Kitty, SIXEL, or ANSI truecolor output."
+repository = "https://github.com/oyoguhito/fpasobrowser"
+
+[features]
+default = ["servo-engine"]
+servo-engine = [
+    "dep:crossterm",
+    "dep:dpi",
+    "dep:embedder_traits",
+    "dep:open",
+    "dep:rustls",
+    "dep:servo",
+    "dep:tokio",
+    "dep:url",
+]
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+clap = { version = "4", features = ["derive", "env"] }
+crossterm = { version = "0.28", optional = true }
+dpi = { version = "0.1", optional = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+open = { version = "5", optional = true }
+rustls = { version = "0.23", default-features = false, optional = true }
+servo = { version = "0.7", optional = true }
+embedder_traits = { package = "servo-embedder-traits", version = "0.7", optional = true }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"], optional = true }
+url = { version = "2", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Prefer Servo's ANGLE/Direct3D path over WGL on Windows. This gives the
+# software context a WARP fallback, which is essential in RDP sessions where
+# the legacy OpenGL path is often unavailable.
+servo = { version = "0.7", optional = true, features = ["no-wgl"] }
+
+[[bin]]
+name = "fpasobrowser"
+path = "src/main.rs"
+required-features = ["servo-engine"]
+
+[[example]]
+name = "servo_offscreen"
+required-features = ["servo-engine"]
+
+# Servo makes the default Rust development profile unusually expensive to link.
+# Keep source-level line information, but avoid generating full debug data for
+# every dependency. Release artifacts retain Cargo's optimized release profile.
+[profile.dev]
+debug = 1
+
+[profile.release]
+strip = "debuginfo"

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fpasobrowser iframe input test</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, sans-serif;
+      background: #10141c;
+      color: #f5f7fb;
+    }
+    body { margin: 0; padding: 32px; line-height: 1.5; }
+    main { max-width: 840px; margin: 0 auto; }
+    h1 { font-size: 42px; margin: 0 0 12px; }
+    .card {
+      background: #1c2433;
+      border: 2px solid #a878ff;
+      border-radius: 18px;
+      padding: 22px;
+      margin: 20px 0;
+      box-shadow: 0 12px 32px #0008;
+    }
+    iframe {
+      display: block;
+      box-sizing: border-box;
+      width: 100%;
+      height: 320px;
+      border: 3px solid #8fb5ff;
+      border-radius: 14px;
+      background: #fff;
+    }
+    a { color: #8fffc1; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Same-origin iframe input test</h1>
+    <p>This local page checks the embedded-document path used by pages that put a form inside an iframe. It does not test or bypass cross-origin CAPTCHA frames.</p>
+    <section class="card">
+      <p><strong>Keyboard:</strong> press <code>i</code> to focus the field in the embedded page, type text, then press <code>Enter</code>. Use <code>Esc</code> to leave browser input mode.</p>
+      <p><strong>Pointer:</strong> click the embedded field or its button. The cyan focus marker must align with the control inside the frame.</p>
+      <p><strong>Links:</strong> click the embedded navigation link. The iframe content changes without replacing this parent page. Link hints remain limited to the top-level document because Servo's offscreen JavaScript binding does not expose a child frame DOM reliably.</p>
+      <iframe src="iframe-child.html" title="Same-origin input test"></iframe>
+    </section>
+    <p><a href="interaction.html">Return to the interaction test</a></p>
+  </main>
+</body>
+</html>

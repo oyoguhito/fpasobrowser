@@ -1,0 +1,11 @@
+/target/
+**/*.rs.bk
+/page.png
+/servo-offscreen.png
+/artifacts/
+
+# The global developer ignore list excludes generic bin/ directories. Keep the
+# source-checkout launchers versioned for this project.
+!/bin/
+!/bin/fpasobrowser
+!/bin/fpasobrowser.ps1
