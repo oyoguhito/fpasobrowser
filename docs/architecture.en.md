@@ -41,9 +41,11 @@ using the upper half-block character (`▀`):
 - foreground color = upper pixel
 - background color = lower pixel
 
-The Kitty backend sends the PNG screenshot through Kitty Graphics Protocol and
-places it into terminal cells. It has much higher fidelity than half-block, but
-requires a compatible terminal.
+The Kitty backend sends the screenshot through Kitty Graphics Protocol and
+places it into terminal cells. It normally uses PNG; for fpasoterm it uses
+direct RGBA pixels to avoid a Windows WebView2 PNG-decode black-frame path.
+It has much higher fidelity than half-block, but requires a compatible
+terminal.
 
 The SIXEL backend quantizes the image to a 6×6×6 color cube and writes a SIXEL
 DCS stream. It defaults to an 8×17-pixel terminal-cell estimate matching

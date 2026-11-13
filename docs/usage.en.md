@@ -172,9 +172,10 @@ fpasobrowser https://example.com/
 The omitted default and explicit `auto` select `kitty` when `KITTY_WINDOW_ID`,
 `TERM=xterm-kitty`, or fpasoterm's `TERM_PROGRAM=fpasoterm` advertises it.
 Otherwise they use the portable, visibly lower-resolution `half-block` backend
-and explain the fallback in the activity line. `kitty` sends the rendered PNG
-via Kitty Graphics Protocol; use `--backend kitty` to force a compatible
-terminal that is not detected. `sixel` uses a 216-color SIXEL stream for
+and explain the fallback in the activity line. `kitty` normally sends PNG via
+Kitty Graphics Protocol, while fpasoterm uses direct RGBA pixels to avoid a
+Windows WebView2 PNG-decode black-frame path; use `--backend kitty` to force a
+compatible terminal that is not detected. `sixel` uses a 216-color SIXEL stream for
 SIXEL-capable terminals.
 Its default 8×17-pixel cell estimate matches fpasoterm's Linux/ChromeOS grid,
 and also sizes Servo's dynamic viewport. That avoids upscaling the screenshot

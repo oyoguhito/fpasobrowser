@@ -109,9 +109,20 @@ impl SelectedBackend {
                 Some(cell_pixels) => sixel::SixelBackend::with_cell_pixels(cell_pixels),
                 None => sixel::SixelBackend::new(),
             }),
-            BackendChoice::Kitty => Self::Kitty(kitty::KittyBackend::new()),
+            BackendChoice::Kitty => Self::Kitty(if fpasoterm_is_terminal() {
+                // fpasoterm's raw-RGBA decoder is also the path used by
+                // terminal-browser.  Prefer it over WebView2's PNG decoder,
+                // which can otherwise paint a black canvas on Windows.
+                kitty::KittyBackend::for_fpasoterm()
+            } else {
+                kitty::KittyBackend::new()
+            }),
         }
     }
+}
+
+fn fpasoterm_is_terminal() -> bool {
+    std::env::var("TERM_PROGRAM").is_ok_and(|value| value.eq_ignore_ascii_case("fpasoterm"))
 }
 
 impl RenderBackend for SelectedBackend {

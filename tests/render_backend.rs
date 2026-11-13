@@ -1,4 +1,5 @@
 use anyhow::Result;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use fpasobrowser::render::{
     kitty::KittyBackend, sixel::SixelBackend, BackendChoice, RenderBackend, RenderSize,
     SelectedBackend, TerminalCellPixels,
@@ -94,6 +95,34 @@ fn kitty_backend_emits_kitty_graphics_sequences() -> Result<()> {
     assert!(!output.contains("\x1b_Ga=d,d=I,i="));
     assert!(output.contains(";"));
     assert!(output.ends_with("\x1b\\"));
+    Ok(())
+}
+
+#[test]
+fn fpasoterm_kitty_backend_emits_raw_rgba_frames() -> Result<()> {
+    let image = DynamicImage::ImageRgba8(
+        RgbaImage::from_raw(2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]).expect("test pixels fit the image"),
+    );
+    let mut output = Vec::new();
+    KittyBackend::for_fpasoterm().render(
+        &image,
+        RenderSize {
+            columns: 10,
+            rows: 5,
+        },
+        &mut output,
+    )?;
+
+    let output = String::from_utf8(output)?;
+    assert!(output.starts_with("\x1b[H\x1b_Ga=T,f=32,t=d,i="));
+    assert!(output.contains(",c=10,r=5,s=2,v=1,C=1,q=2,"));
+    let payload = output
+        .split_once(';')
+        .expect("Kitty transfer has a payload")
+        .1
+        .strip_suffix("\x1b\\")
+        .expect("single small Kitty transfer has a terminator");
+    assert_eq!(STANDARD.decode(payload)?, vec![1, 2, 3, 4, 5, 6, 7, 8]);
     Ok(())
 }
 

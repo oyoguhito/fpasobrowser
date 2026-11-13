@@ -105,7 +105,7 @@ CAPTCHA challenges.
 
 ```mermaid
 flowchart LR
-    A[Servo RGBA frame] --> B[image resize / PNG encode]
+    A[Servo RGBA frame] --> B[image resize / PNG or direct RGBA]
     B --> C{RenderBackend}
     C --> D[HalfBlockBackend: truecolor ANSI]
     C --> E[KittyBackend: Kitty graphics]

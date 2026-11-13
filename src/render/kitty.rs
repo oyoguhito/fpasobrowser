@@ -14,8 +14,22 @@ use std::{
 const CHUNK_SIZE: usize = 4096;
 const KITTY_ID_NAMESPACE: u32 = 0x4600_0000;
 
+/// The wire representation used for a Kitty image transfer.
+///
+/// PNG is substantially smaller for ordinary web pages, so it remains the
+/// default for Kitty and other terminal emulators.  fpasoterm on Windows uses
+/// WebView2 to decode an incoming image.  Its raw-RGBA path is the same path
+/// used by terminal-browser and avoids the PNG-to-ImageBitmap conversion that
+/// has produced a fully black canvas on some WebView2 versions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KittyPayloadFormat {
+    Png,
+    Rgba,
+}
+
 #[derive(Debug)]
 pub struct KittyBackend {
+    payload_format: KittyPayloadFormat,
     /// The image for the newest frame.
     active_image_id: AtomicU32,
     /// Keep the immediately preceding frame alive while the newest transfer is
@@ -34,8 +48,23 @@ pub struct KittyBackend {
 impl KittyBackend {
     #[must_use]
     pub fn new() -> Self {
+        Self::with_payload_format(KittyPayloadFormat::Png)
+    }
+
+    /// Use uncompressed RGBA pixels for fpasoterm's WebView2 renderer.
+    ///
+    /// This is intentionally an explicit constructor rather than changing
+    /// the native Kitty default: raw frames are more robust for this host but
+    /// noticeably larger on an ordinary terminal connection.
+    #[must_use]
+    pub fn for_fpasoterm() -> Self {
+        Self::with_payload_format(KittyPayloadFormat::Rgba)
+    }
+
+    fn with_payload_format(payload_format: KittyPayloadFormat) -> Self {
         let scoped_id = KITTY_ID_NAMESPACE | (process::id() & 0x00ff_ffff);
         Self {
+            payload_format,
             active_image_id: AtomicU32::new(0),
             retained_image_id: AtomicU32::new(0),
             last_render_size: Mutex::new(None),
@@ -61,8 +90,15 @@ impl RenderBackend for KittyBackend {
     }
 
     fn render(&self, image: &DynamicImage, size: RenderSize, writer: &mut dyn Write) -> Result<()> {
-        let png = encode_png(image)?;
-        let encoded = STANDARD.encode(png);
+        let (format, width, height, bytes) = match self.payload_format {
+            KittyPayloadFormat::Png => (100, None, None, encode_png(image)?),
+            KittyPayloadFormat::Rgba => {
+                let image = image.to_rgba8();
+                let (width, height) = image.dimensions();
+                (32, Some(width), Some(height), image.into_raw())
+            }
+        };
+        let encoded = STANDARD.encode(bytes);
         let columns = size.columns.max(1);
         let rows = size.rows.max(1);
         let previous_size = {
@@ -116,9 +152,14 @@ impl RenderBackend for KittyBackend {
             let more = u8::from((index + 1) * CHUNK_SIZE < encoded.len());
             let chunk = std::str::from_utf8(chunk).context("base64 chunk should be UTF-8")?;
             if index == 0 {
+                let dimensions = match (width, height) {
+                    (Some(width), Some(height)) => format!(",s={width},v={height}"),
+                    (None, None) => String::new(),
+                    _ => unreachable!("raw Kitty frames always include both dimensions"),
+                };
                 write!(
                     writer,
-                    "\x1b_Ga=T,f=100,t=d,i={image_id},p={placement_id},c={columns},r={rows},C=1,q=2,m={more};{chunk}\x1b\\"
+                    "\x1b_Ga=T,f={format},t=d,i={image_id},p={placement_id},c={columns},r={rows}{dimensions},C=1,q=2,m={more};{chunk}\x1b\\"
                 )?;
             } else {
                 write!(writer, "\x1b_Gm={more};{chunk}\x1b\\")?;
