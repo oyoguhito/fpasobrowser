@@ -29,6 +29,7 @@ bash scripts/collect-third-party-licenses.sh
 mkdir -p artifacts
 archive="artifacts/fpasobrowser-v${version}-${label}.tar.gz"
 runtime_files=("$binary")
+windows_launcher=''
 if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
   for runtime in libEGL.dll libGLESv2.dll; do
     runtime_path="target/release/${runtime}"
@@ -38,14 +39,26 @@ if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
     fi
     runtime_files+=("$runtime")
   done
+  if [[ ! -f fpasobrowser.cmd ]]; then
+    echo "Windows launcher was not found: fpasobrowser.cmd" >&2
+    exit 1
+  fi
+  windows_launcher='fpasobrowser.cmd'
+fi
+package_files=("${runtime_files[@]}")
+if [[ -n "$windows_launcher" ]]; then
+  package_files+=("$windows_launcher")
 fi
 staging_dir="$(mktemp -d "${TMPDIR:-/tmp}/fpasobrowser-package.XXXXXX")"
 trap 'rm -rf -- "$staging_dir"' EXIT
 for runtime_file in "${runtime_files[@]}"; do
   cp "target/release/$runtime_file" "$staging_dir/"
 done
+if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
+  cp fpasobrowser.cmd "$staging_dir/"
+fi
 cp LICENSE THIRD_PARTY_NOTICES.md Cargo.lock "$staging_dir/"
 cp -R target/release/THIRD_PARTY_LICENSES "$staging_dir/"
 tar -C "$staging_dir" -czf "$archive" \
-  "${runtime_files[@]}" LICENSE THIRD_PARTY_NOTICES.md Cargo.lock THIRD_PARTY_LICENSES
+  "${package_files[@]}" LICENSE THIRD_PARTY_NOTICES.md Cargo.lock THIRD_PARTY_LICENSES
 printf 'created %s\n' "$archive"

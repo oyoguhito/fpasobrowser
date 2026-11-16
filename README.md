@@ -49,7 +49,8 @@ cd /home/oyoguhito/github/oyoguhito/fpasobrowser
 `bin/fpasobrowser` is the recommended source-checkout launcher. It builds
 `target/debug/fpasobrowser` only when it is missing or Rust/Cargo inputs are
 newer, then directly executes it. Subsequent launches do not invoke `cargo
-run`. On Windows PowerShell use `./bin/fpasobrowser.ps1 --version` instead.
+run`. On Windows use `fpasobrowser.cmd --version` instead. The same CMD
+launcher works from both a source checkout and an extracted release archive.
 
 Before the first source build, run the launcher diagnosis. It checks the
 requirements which Cargo cannot explain before it gets far enough to compile
@@ -60,12 +61,16 @@ Servo:
 ```
 
 ```powershell
-.\bin\fpasobrowser.ps1 --doctor
+.\fpasobrowser.cmd --doctor
 ```
 
 The built executable also accepts `--doctor`; it checks its installed runtime
 files. On Windows this verifies the adjacent ANGLE files (`libEGL.dll` and
 `libGLESv2.dll`) needed by a copied release executable.
+
+After extracting a Windows release archive, start it with
+`fpasobrowser.cmd`. That file is beside `fpasobrowser.exe` and launches the
+executable directly; PowerShell, Cargo, Python, and LLVM are not required.
 
 ## Windows native: source-build prerequisites
 
@@ -92,7 +97,7 @@ winget install Rustlang.Rustup
 winget install Python.Python.3.12
 winget install --id LLVM.LLVM --exact
 cd C:\path\to\fpasobrowser
-./bin/fpasobrowser.ps1 --version
+.\fpasobrowser.cmd --version
 ```
 
 For the error in which Cargo/bindgen says it cannot find `libclang.dll` (as in
@@ -100,11 +105,11 @@ For the error in which Cargo/bindgen says it cannot find `libclang.dll` (as in
 it reports the exact missing prerequisite without attempting a build:
 
 ```powershell
-.\bin\fpasobrowser.ps1 --doctor
+.\fpasobrowser.cmd --doctor
 winget install --id LLVM.LLVM --exact
 # Open a new PowerShell window, then:
-.\bin\fpasobrowser.ps1 --doctor
-.\bin\fpasobrowser.ps1
+.\fpasobrowser.cmd --doctor
+.\fpasobrowser.cmd
 ```
 
 The launcher locates `python.exe` or the Windows `py` launcher, then locates
@@ -129,7 +134,7 @@ that Kitty Graphics was not detected. To force a Kitty-capable terminal that
 does not advertise itself, use:
 
 ```powershell
-./bin/fpasobrowser.ps1 --backend kitty
+.\fpasobrowser.cmd --backend kitty
 ```
 
 The Windows build uses Servo's ANGLE/Direct3D software fallback instead of

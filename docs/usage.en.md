@@ -28,13 +28,17 @@ bindgen rather than from fpasobrowser:
 ```
 
 ```powershell
-.\bin\fpasobrowser.ps1 --doctor
+.\fpasobrowser.cmd --doctor
 ```
 
 The already-built executable also supports `fpasobrowser --doctor`. That check
 is for copied runtime files; on Windows it verifies `libEGL.dll` and
 `libGLESv2.dll` beside the executable. If a source build cannot start, use the
 launcher doctor because the Rust executable does not exist yet.
+
+An extracted Windows release archive includes `fpasobrowser.cmd` beside the
+executable. Run that CMD file to start the adjacent executable directly; it
+does not require PowerShell, Cargo, Python, or LLVM.
 
 ## Windows native: source-build prerequisites
 
@@ -52,17 +56,17 @@ winget install Rustlang.Rustup
 winget install Python.Python.3.12
 winget install --id LLVM.LLVM --exact
 cd C:\path\to\fpasobrowser
-./bin/fpasobrowser.ps1 --version
+.\fpasobrowser.cmd --version
 ```
 
 If a direct Cargo invocation reports `Unable to find libclang` or says it
 cannot load `libclang.dll`, run the doctor first. The likely repair is:
 
 ```powershell
-.\bin\fpasobrowser.ps1 --doctor
+.\fpasobrowser.cmd --doctor
 winget install --id LLVM.LLVM --exact
 # Open a new PowerShell window, then use the launcher:
-.\bin\fpasobrowser.ps1
+.\fpasobrowser.cmd
 ```
 
 The launcher detects `python.exe` or the Windows `py` launcher, then finds
@@ -86,7 +90,7 @@ reason in the activity line. To force a compatible terminal that does not
 advertise itself, use:
 
 ```powershell
-./bin/fpasobrowser.ps1 --backend kitty
+.\fpasobrowser.cmd --backend kitty
 ```
 
 Windows uses Servo's ANGLE/Direct3D fallback instead of WGL so it can render
@@ -107,7 +111,9 @@ cd /home/oyoguhito/github/oyoguhito/fpasobrowser
 For a source checkout, `./bin/fpasobrowser` is the normal entry point. It
 builds the debug binary only when missing or out of date, then executes the
 binary directly. You do not need to use `cargo run` for every launch. On
-Windows PowerShell, use `./bin/fpasobrowser.ps1 --version`.
+Windows, use `fpasobrowser.cmd --version`. In a source checkout it delegates
+to the prerequisite-aware PowerShell launcher; in a release archive it starts
+the adjacent executable directly.
 
 First perform a frame check without entering terminal raw mode. The bundled
 local page should produce a PNG with the *fpasobrowser interaction test*

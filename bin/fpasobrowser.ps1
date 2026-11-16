@@ -147,10 +147,10 @@ function Invoke-FpasobrowserDoctor {
     }
 
     if ($missing) {
-        Write-Host "result: prerequisites are missing. Install the listed items, reopen PowerShell, and run .\bin\fpasobrowser.ps1 --doctor again."
+        Write-Host "result: prerequisites are missing. Install the listed items, reopen PowerShell, and run .\fpasobrowser.cmd --doctor again."
         return $false
     }
-    Write-Host "result: source-build prerequisites look ready. Start with .\bin\fpasobrowser.ps1 --version."
+    Write-Host "result: source-build prerequisites look ready. Start with .\fpasobrowser.cmd --version."
     return $true
 }
 

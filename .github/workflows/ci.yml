@@ -88,8 +88,8 @@ jobs:
 
       - name: Diagnose Windows source-build prerequisites
         if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./bin/fpasobrowser.ps1 --doctor
+        shell: cmd
+        run: fpasobrowser.cmd --doctor
 
       - name: Format
         run: cargo fmt --all -- --check

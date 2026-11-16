@@ -27,12 +27,15 @@ source buildの前にcheckout launcherで診断できます。CargoがServoのco
 ```
 
 ```powershell
-.\bin\fpasobrowser.ps1 --doctor
+.\fpasobrowser.cmd --doctor
 ```
 
 build済みbinaryも`fpasobrowser --doctor`に対応します。これはコピー後のruntime file確認用で、Windowsでは
 実行fileと同じdirectoryの`libEGL.dll`、`libGLESv2.dll`を確認します。source buildそのものが始められない
 ときはRust binaryが未生成のため、launcherの`--doctor`を使ってください。
+
+展開済みWindows release archiveにはexeと同じdirectoryに`fpasobrowser.cmd`が含まれます。このCMDを
+実行するとexeを直接起動します。PowerShell、Cargo、Python、LLVMは必要ありません。
 
 ## Windows native: source buildの前提条件
 
@@ -47,17 +50,17 @@ winget install Rustlang.Rustup
 winget install Python.Python.3.12
 winget install --id LLVM.LLVM --exact
 cd C:\path\to\fpasobrowser
-./bin/fpasobrowser.ps1 --version
+.\fpasobrowser.cmd --version
 ```
 
 直接のCargo実行で`Unable to find libclang`や`libclang.dll`を読み込めないというerrorが出た場合は、まず
 `cargo run`を再試行せずdoctorを実行します。通常の修復は次です。
 
 ```powershell
-.\bin\fpasobrowser.ps1 --doctor
+.\fpasobrowser.cmd --doctor
 winget install --id LLVM.LLVM --exact
 # 新しいPowerShellを開いてからlauncherで起動
-.\bin\fpasobrowser.ps1
+.\fpasobrowser.cmd
 ```
 
 launcherは`python.exe`またはWindowsの`py` launcherを検出し、標準LLVM install directoryの`libclang.dll`を
@@ -78,7 +81,7 @@ checkoutではlauncherを優先してください。
 対応しているが自動検出されないterminalで強制するには、次を指定します。
 
 ```powershell
-./bin/fpasobrowser.ps1 --backend kitty
+.\fpasobrowser.cmd --backend kitty
 ```
 
 WindowsではRemote Desktop sessionでも描画できるよう、WGLではなくServoのANGLE/Direct3D fallbackを使います。
@@ -97,8 +100,9 @@ cd /home/oyoguhito/github/oyoguhito/fpasobrowser
 
 source checkoutでは`./bin/fpasobrowser`を通常の起動口にします。`target/debug/fpasobrowser`が
 存在しない、またはRust/Cargo入力より古い場合だけbuildし、その後は生成済みbinaryを直接実行します。
-毎回`cargo run`を入力する必要はありません。Windows PowerShellでは
-`./bin/fpasobrowser.ps1 --version`を使います。
+毎回`cargo run`を入力する必要はありません。Windowsでは
+`fpasobrowser.cmd --version`を使います。source checkoutでは前提条件を確認するPowerShell
+launcherを内部で呼び、release archiveでは同じdirectoryのexeを直接起動します。
 
 最初にterminalのraw modeへ入らないframe確認を行います。同梱ページのPNGが生成され、見出し
 `fpasobrowser interaction test`、入力欄、黄色のbuttonが見えれば、外部ChromiumなしのServo描画と
