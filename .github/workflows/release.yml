@@ -60,17 +60,23 @@ jobs:
       # a cold Servo build; one or two jobs can stall it.
       CARGO_BUILD_JOBS: 3
       SCCACHE_GHA_ENABLED: "true"
-      RUSTC_WRAPPER: sccache
+      # Servo's generated rustc invocations can exceed the command size that
+      # sccache can spawn on Windows.  Cargo accepts an empty wrapper as
+      # disabled, so build there directly while retaining the cache elsewhere.
+      RUSTC_WRAPPER: ${{ matrix.rustc_wrapper }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - label: linux-x64
             os: ubuntu-latest
+            rustc_wrapper: sccache
           - label: macos-arm64
             os: macos-latest
+            rustc_wrapper: sccache
           - label: windows-x64
             os: windows-latest
+            rustc_wrapper: ''
     steps:
       - name: Checkout release ref
         uses: actions/checkout@v4
