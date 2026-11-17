@@ -36,6 +36,32 @@ Without a URL, fpasobrowser shows its built-in start page. Press `g` or click
 fpasobrowser https://example.com/
 ```
 
+## Source install and build (Windows, macOS, Linux)
+
+From a source checkout, the installer prepares the native Servo build
+prerequisites for the host and builds `target/debug/fpasobrowser`. It does not
+launch the terminal UI, so it is suitable for a first install or CI-like setup.
+The initial Servo build can take a while and uses substantial disk space.
+
+```sh
+./install.sh
+```
+
+On Windows, the matching CMD entry point works from either `cmd.exe` or
+PowerShell. It uses `winget` to install Rust stable, Python 3, and LLVM when
+they are missing, then builds the local binary and stages its ANGLE runtime.
+
+```powershell
+.\install.cmd
+```
+
+`install.sh` supports Debian/Ubuntu/ChromeOS Linux (`apt`), Fedora-family
+Linux (`dnf`), Arch Linux (`pacman`), and macOS. On macOS, install any prompted
+Xcode Command Line Tools and rerun the command. To only build after installing
+prerequisites yourself, use `./install.sh --build-only` or
+`.\install.cmd --build-only`. To prepare dependencies without building, use
+`--no-build`.
+
 ## Quick start and verification (Linux / ChromeOS Linux)
 
 Build Servo once, then run the generated binary directly. Running the binary
@@ -51,6 +77,17 @@ cd /home/oyoguhito/github/oyoguhito/fpasobrowser
 newer, then directly executes it. Subsequent launches do not invoke `cargo
 run`. On Windows use `fpasobrowser.cmd --version` instead. The same CMD
 launcher works from both a source checkout and an extracted release archive.
+
+To build without starting the terminal UI, use `--build` with the platform
+launcher:
+
+```sh
+./bin/fpasobrowser --build
+```
+
+```powershell
+.\fpasobrowser.cmd --build
+```
 
 Before the first source build, run the launcher diagnosis. It checks the
 requirements which Cargo cannot explain before it gets far enough to compile

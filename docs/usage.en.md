@@ -16,6 +16,28 @@ the `[URL]` toolbar control to enter an address, or pass it directly:
 ./bin/fpasobrowser https://example.com/
 ```
 
+## Install and build from source
+
+Use the source-checkout installer to prepare native Servo prerequisites and
+build the local debug binary without launching the terminal UI:
+
+```sh
+./install.sh
+```
+
+On Windows, run the CMD entry point from either PowerShell or `cmd.exe`:
+
+```powershell
+.\install.cmd
+```
+
+The Unix installer supports `apt` (Debian/Ubuntu/ChromeOS Linux), `dnf`
+(Fedora-family Linux), `pacman` (Arch Linux), and macOS. The Windows installer
+uses `winget` to install Rust stable, Python 3, and LLVM when needed. The first
+Servo build is large and can take a while. Use `--build-only` when prerequisites
+are already installed, or `--no-build` to only prepare them. Both platform
+launchers accept `--build` to build without opening the UI.
+
 ## Diagnostics
 
 Use the checkout launcher before the first source build. It checks tools and
@@ -363,9 +385,10 @@ does not advertise the protocol, so it receives the truecolor half-block
 fallback and an activity-line explanation.
 
 On Linux and ChromeOS Linux, the repository's `.cargo/config.toml` limits Cargo
-to one job and uses installed `/usr/bin/mold` through `clang`. This avoids
-running several large Servo linkers concurrently on memory-constrained systems.
-The setting does not apply to Windows or macOS.
+to three jobs and uses installed `/usr/bin/mold` through `clang`. Three jobs
+keep memory bounded while leaving a Cargo jobserver token available for
+WebRender's shader generator during a cold Servo build. The linker setting does
+not apply to Windows or macOS.
 
 ## fpasoterm relationship
 

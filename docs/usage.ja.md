@@ -16,6 +16,27 @@ URLを省略すると、組み込みのstart pageを表示します。`g`また�
 ./bin/fpasobrowser https://example.com/
 ```
 
+## sourceからの導入とbuild
+
+source checkoutでは、OSのnative Servo前提条件を導入してlocal debug binaryをbuildする
+installerを使えます。terminal UIは起動しないため、初回導入や事前buildに使えます。
+
+```sh
+./install.sh
+```
+
+WindowsではPowerShellと`cmd.exe`のどちらからもCMD entry pointを実行できます。
+
+```powershell
+.\install.cmd
+```
+
+Unix版はDebian/Ubuntu/ChromeOS Linuxの`apt`、Fedora系Linuxの`dnf`、Arch Linuxの
+`pacman`、macOSに対応します。Windows版は必要に応じて`winget`でRust stable、Python 3、
+LLVMを導入します。最初のServo buildは大きく時間がかかります。前提条件を既に導入済みなら
+`--build-only`、前提条件だけを導入するなら`--no-build`を指定します。どちらのplatform launcherも
+UIを起動せずbuildする`--build`を受け付けます。
+
 ## 診断
 
 source buildの前にcheckout launcherで診断できます。CargoがServoのcompileを開始する前に、Cargoだけでは

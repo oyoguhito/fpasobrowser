@@ -140,6 +140,11 @@ if [[ "${1:-}" == "--doctor" && "$#" -eq 1 ]]; then
     exit $?
 fi
 
+build_only=false
+if [[ "${1:-}" == "--build" && "$#" -eq 1 ]]; then
+    build_only=true
+fi
+
 if [[ "$needs_build" == true ]]; then
     if ! command -v "$cargo_command" >/dev/null 2>&1; then
         standard_cargo="${CARGO_HOME:-$HOME/.cargo}/bin/cargo"
@@ -155,6 +160,11 @@ if [[ "$needs_build" == true ]]; then
         cd "$repo_dir"
         "$cargo_command" build --bin fpasobrowser
     )
+fi
+
+if [[ "$build_only" == true ]]; then
+    echo "fpasobrowser: local debug binary is ready: $binary" >&2
+    exit 0
 fi
 
 exec "$binary" "$@"

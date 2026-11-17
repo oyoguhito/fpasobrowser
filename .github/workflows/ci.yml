@@ -97,6 +97,18 @@ jobs:
         shell: cmd
         run: fpasobrowser.cmd --doctor
 
+      - name: Check source installer
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bash -n bin/fpasobrowser install.sh
+          ./install.sh --help
+
+      - name: Check Windows source installer
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: install.cmd --no-build
+
       - name: Format
         run: cargo fmt --all -- --check
 

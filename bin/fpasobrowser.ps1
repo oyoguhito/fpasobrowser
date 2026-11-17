@@ -163,6 +163,8 @@ if ($args.Count -eq 1 -and $args[0] -eq "--doctor") {
     exit 1
 }
 
+$buildOnly = $args.Count -eq 1 -and $args[0] -eq "--build"
+
 if ($needsBuild) {
     $cargoCommand = Resolve-FpasobrowserCargo
     if (-not $cargoCommand) {
@@ -211,6 +213,11 @@ if (-not $env:FPASOBROWSER_BINARY) {
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
+}
+
+if ($buildOnly) {
+    Write-Host "fpasobrowser: local debug binary is ready: $binary"
+    exit 0
 }
 
 & $binary @args
