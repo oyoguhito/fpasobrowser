@@ -1,5 +1,7 @@
 # fpasobrowser
 
+[日本語 README](README.ja.md)
+
 `fpasobrowser` is an experimental terminal web viewer.
 
 It is **not** a text browser like `lynx` or `w3m`. It embeds the Servo browser

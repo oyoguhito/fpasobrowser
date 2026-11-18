@@ -210,8 +210,14 @@ if ($needsBuild) {
 if (-not $env:FPASOBROWSER_BINARY) {
     $runtimePreparer = Join-Path $repoDir "scripts\prepare-windows-runtime.ps1"
     & $runtimePreparer -Profile debug
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
+    # A PowerShell script which completes normally does not necessarily set
+    # $LASTEXITCODE. Treating its initial $null value as non-zero made the
+    # source launcher return immediately after staging ANGLE DLLs, before it
+    # could start fpasobrowser. `throw` from the preparer still obeys this
+    # script's ErrorActionPreference=Stop; preserve only explicit failures.
+    $runtimePreparerExitCode = $LASTEXITCODE
+    if ($null -ne $runtimePreparerExitCode -and $runtimePreparerExitCode -ne 0) {
+        exit $runtimePreparerExitCode
     }
 }
 
