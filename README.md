@@ -41,9 +41,10 @@ fpasobrowser https://example.com/
 ## Source install and build (Windows, macOS, Linux)
 
 From a source checkout, the installer prepares the native Servo build
-prerequisites for the host and builds `target/debug/fpasobrowser`. It does not
-launch the terminal UI, so it is suitable for a first install or CI-like setup.
-The initial Servo build can take a while and uses substantial disk space.
+prerequisites for the host and replaces `target/debug/fpasobrowser` with a
+fresh build. It does not launch the terminal UI, so it is suitable for a first
+install or CI-like setup. The initial Servo build can take a while and uses
+substantial disk space.
 
 ```sh
 ./install.sh
@@ -62,7 +63,8 @@ Linux (`dnf`), Arch Linux (`pacman`), and macOS. On macOS, install any prompted
 Xcode Command Line Tools and rerun the command. To only build after installing
 prerequisites yourself, use `./install.sh --build-only` or
 `.\install.cmd --build-only`. To prepare dependencies without building, use
-`--no-build`.
+`--no-build`. `--rebuild` on either platform launcher performs the same forced
+refresh without the prerequisite installer.
 
 ## Quick start and verification (Linux / ChromeOS Linux)
 
@@ -81,7 +83,8 @@ run`. On Windows use `fpasobrowser.cmd --version` instead. The same CMD
 launcher works from both a source checkout and an extracted release archive.
 
 To build without starting the terminal UI, use `--build` with the platform
-launcher:
+launcher. To replace an existing local binary regardless of its timestamps,
+use `--rebuild` instead:
 
 ```sh
 ./bin/fpasobrowser --build
@@ -89,6 +92,10 @@ launcher:
 
 ```powershell
 .\fpasobrowser.cmd --build
+```
+
+```powershell
+.\fpasobrowser.cmd --rebuild
 ```
 
 Before the first source build, run the launcher diagnosis. It checks the

@@ -12,9 +12,10 @@ usage() {
     cat <<'EOF'
 Usage: ./install.sh [--build-only] [--no-build]
 
-Install fpasobrowser source-build prerequisites for Linux or macOS, then build
-target/debug/fpasobrowser. --build-only skips OS package installation and uses
-the normal prerequisite-aware launcher. --no-build installs prerequisites only.
+Install fpasobrowser source-build prerequisites for Linux or macOS, then
+replace target/debug/fpasobrowser with a freshly built binary. --build-only
+skips OS package installation and refreshes the binary. --no-build installs
+prerequisites only.
 EOF
 }
 
@@ -101,7 +102,7 @@ if [[ "$install_prerequisites" == true ]]; then
 fi
 
 if [[ "$build" == true ]]; then
-    exec "$script_dir/bin/fpasobrowser" --build
+    exec "$script_dir/bin/fpasobrowser" --rebuild
 fi
 
-echo 'fpasobrowser install: prerequisites are ready; run ./bin/fpasobrowser --build when ready to compile.' >&2
+echo 'fpasobrowser install: prerequisites are ready; run ./bin/fpasobrowser --rebuild when ready to compile.' >&2

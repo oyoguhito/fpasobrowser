@@ -44,8 +44,9 @@ PowerShellではcurrent directoryを自動検索しないため、`fpasobrowser.
 
 ## sourceから導入してbuildする
 
-source checkoutでは、OSに必要なbuild toolを導入してlocal debug binaryをbuildする
-installerを使えます。初回のServo buildは大きく、時間とdisk spaceを必要とします。
+source checkoutでは、OSに必要なbuild toolを導入してlocal debug binaryを毎回更新する
+installerを使えます。既存の`target\\debug\\fpasobrowser.exe`があっても置き換えます。
+初回のServo buildは大きく、時間とdisk spaceを必要とします。
 
 ```sh
 # Debian / Ubuntu / ChromeOS Linux、Fedora系、Arch Linux、macOS
@@ -57,9 +58,10 @@ installerを使えます。初回のServo buildは大きく、時間とdisk spac
 .\install.cmd
 ```
 
-- `--build-only`: 前提条件の導入を行わずbuildだけを実行します。
+- `--build-only`: 前提条件の導入を行わず、既存binaryを置き換えてbuildします。
 - `--no-build`: 前提条件だけを導入します。
-- `--build`: platform launcherでUIを起動せずbuildだけを実行します。
+- `--build`: platform launcherでUIを起動せず、必要な場合だけbuildします。
+- `--rebuild`: platform launcherでUIを起動せず、既存binaryを必ず置き換えてbuildします。
 
 Linux版installerは`apt`、`dnf`、`pacman`に対応します。Windows版は`winget`を使い、
 Rust stable、Python 3、LLVMを必要時だけ導入します。macOSでXcode Command Line Toolsの

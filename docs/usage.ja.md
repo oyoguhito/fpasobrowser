@@ -18,8 +18,8 @@ URLを省略すると、組み込みのstart pageを表示します。`g`また�
 
 ## sourceからの導入とbuild
 
-source checkoutでは、OSのnative Servo前提条件を導入してlocal debug binaryをbuildする
-installerを使えます。terminal UIは起動しないため、初回導入や事前buildに使えます。
+source checkoutでは、OSのnative Servo前提条件を導入してlocal debug binaryを置き換える
+installerを使えます。terminal UIは起動しないため、初回導入や更新buildに使えます。
 
 ```sh
 ./install.sh
@@ -33,9 +33,9 @@ WindowsではPowerShellと`cmd.exe`のどちらからもCMD entry pointを実行
 
 Unix版はDebian/Ubuntu/ChromeOS Linuxの`apt`、Fedora系Linuxの`dnf`、Arch Linuxの
 `pacman`、macOSに対応します。Windows版は必要に応じて`winget`でRust stable、Python 3、
-LLVMを導入します。最初のServo buildは大きく時間がかかります。前提条件を既に導入済みなら
-`--build-only`、前提条件だけを導入するなら`--no-build`を指定します。どちらのplatform launcherも
-UIを起動せずbuildする`--build`を受け付けます。
+LLVMを導入します。最初のServo buildは大きく時間がかかります。installerと`--build-only`は
+既存local binaryを置き換えます。前提条件だけを導入するなら`--no-build`を指定します。どちらの
+platform launcherもUIを起動せず必要時だけbuildする`--build`、常に置き換える`--rebuild`を受け付けます。
 
 ## 診断
 

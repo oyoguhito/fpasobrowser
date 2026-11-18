@@ -19,7 +19,7 @@ the `[URL]` toolbar control to enter an address, or pass it directly:
 ## Install and build from source
 
 Use the source-checkout installer to prepare native Servo prerequisites and
-build the local debug binary without launching the terminal UI:
+replace the local debug binary without launching the terminal UI:
 
 ```sh
 ./install.sh
@@ -34,9 +34,11 @@ On Windows, run the CMD entry point from either PowerShell or `cmd.exe`:
 The Unix installer supports `apt` (Debian/Ubuntu/ChromeOS Linux), `dnf`
 (Fedora-family Linux), `pacman` (Arch Linux), and macOS. The Windows installer
 uses `winget` to install Rust stable, Python 3, and LLVM when needed. The first
-Servo build is large and can take a while. Use `--build-only` when prerequisites
-are already installed, or `--no-build` to only prepare them. Both platform
-launchers accept `--build` to build without opening the UI.
+Servo build is large and can take a while. `install` and `--build-only` replace
+an existing local binary so that it matches the current checkout. Use
+`--no-build` to only prepare prerequisites. Both platform launchers accept
+`--build` to build only when required, or `--rebuild` to force replacement
+without opening the UI.
 
 ## Diagnostics
 

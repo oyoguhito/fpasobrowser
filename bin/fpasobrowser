@@ -145,6 +145,13 @@ if [[ "${1:-}" == "--build" && "$#" -eq 1 ]]; then
     build_only=true
 fi
 
+force_rebuild=false
+if [[ "${1:-}" == "--rebuild" && "$#" -eq 1 ]]; then
+    build_only=true
+    force_rebuild=true
+    needs_build=true
+fi
+
 if [[ "$needs_build" == true ]]; then
     if ! command -v "$cargo_command" >/dev/null 2>&1; then
         standard_cargo="${CARGO_HOME:-$HOME/.cargo}/bin/cargo"
@@ -155,10 +162,17 @@ if [[ "$needs_build" == true ]]; then
             exit 127
         fi
     fi
-    echo "fpasobrowser: building the local debug binary (first build can take a while)..." >&2
+    if [[ "$force_rebuild" == true ]]; then
+        echo "fpasobrowser: refreshing the local debug binary..." >&2
+    else
+        echo "fpasobrowser: building the local debug binary (first build can take a while)..." >&2
+    fi
     (
         cd "$repo_dir"
-        "$cargo_command" build --bin fpasobrowser
+        if [[ "$force_rebuild" == true ]]; then
+            "$cargo_command" clean -p fpasobrowser
+        fi
+        "$cargo_command" build --locked --bin fpasobrowser
     )
 fi
 

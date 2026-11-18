@@ -51,9 +51,9 @@ if (-not $BuildOnly) {
 }
 
 if ($NoBuild) {
-    Write-Host "fpasobrowser install: prerequisites are ready; run .\fpasobrowser.cmd --build when ready to compile."
+    Write-Host "fpasobrowser install: prerequisites are ready; run .\fpasobrowser.cmd --rebuild when ready to compile."
     exit 0
 }
 
-& (Join-Path $repoDir "fpasobrowser.cmd") --build
+& (Join-Path $repoDir "fpasobrowser.cmd") --rebuild
 exit $LASTEXITCODE

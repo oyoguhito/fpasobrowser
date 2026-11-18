@@ -163,7 +163,11 @@ if ($args.Count -eq 1 -and $args[0] -eq "--doctor") {
     exit 1
 }
 
-$buildOnly = $args.Count -eq 1 -and $args[0] -eq "--build"
+$buildOnly = $args.Count -eq 1 -and ($args[0] -eq "--build" -or $args[0] -eq "--rebuild")
+$forceRebuild = $args.Count -eq 1 -and $args[0] -eq "--rebuild"
+if ($forceRebuild) {
+    $needsBuild = $true
+}
 
 if ($needsBuild) {
     $cargoCommand = Resolve-FpasobrowserCargo
@@ -195,10 +199,20 @@ if ($needsBuild) {
         exit 127
     }
     $env:LIBCLANG_PATH = $libclangDirectory
-    Write-Host "fpasobrowser: building the local debug binary (first build can take a while)..."
+    if ($forceRebuild) {
+        Write-Host "fpasobrowser: refreshing the local debug binary..."
+    } else {
+        Write-Host "fpasobrowser: building the local debug binary (first build can take a while)..."
+    }
     Push-Location $repoDir
     try {
-        & $cargoCommand.Source build --bin fpasobrowser
+        if ($forceRebuild) {
+            & $cargoCommand.Source clean -p fpasobrowser
+            if ($LASTEXITCODE -ne 0) {
+                exit $LASTEXITCODE
+            }
+        }
+        & $cargoCommand.Source build --locked --bin fpasobrowser
         if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
         }
