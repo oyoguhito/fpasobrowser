@@ -1,6 +1,7 @@
 use super::{RenderBackend, RenderSize};
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use flate2::{write::ZlibEncoder, Compression};
 use image::{DynamicImage, ImageFormat};
 use std::{
     io::{Cursor, Write},
@@ -17,14 +18,14 @@ const KITTY_ID_NAMESPACE: u32 = 0x4600_0000;
 /// The wire representation used for a Kitty image transfer.
 ///
 /// PNG is substantially smaller for ordinary web pages, so it remains the
-/// default for Kitty and other terminal emulators.  fpasoterm on Windows uses
-/// WebView2 to decode an incoming image.  Its raw-RGBA path is the same path
-/// used by terminal-browser and avoids the PNG-to-ImageBitmap conversion that
-/// has produced a fully black canvas on some WebView2 versions.
+/// default for Kitty and other terminal emulators. fpasoterm on Windows uses
+/// a direct raw-RGBA canvas path, compressed with the Kitty `o=z` transport.
+/// This avoids the WebView2 ImageBitmap path and keeps a full browser frame
+/// small enough to cross the Windows PTY without stalling its writer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KittyPayloadFormat {
     Png,
-    Rgba,
+    RgbaZlib,
 }
 
 #[derive(Debug)]
@@ -51,14 +52,14 @@ impl KittyBackend {
         Self::with_payload_format(KittyPayloadFormat::Png)
     }
 
-    /// Use uncompressed RGBA pixels for fpasoterm's WebView2 renderer.
+    /// Use zlib-compressed RGBA pixels for fpasoterm's direct canvas renderer.
     ///
     /// This is intentionally an explicit constructor rather than changing
-    /// the native Kitty default: raw frames are more robust for this host but
-    /// noticeably larger on an ordinary terminal connection.
+    /// the native Kitty default: direct raw pixels avoid ImageBitmap, while
+    /// zlib prevents a multi-megabyte frame from blocking the Windows PTY.
     #[must_use]
     pub fn for_fpasoterm() -> Self {
-        Self::with_payload_format(KittyPayloadFormat::Rgba)
+        Self::with_payload_format(KittyPayloadFormat::RgbaZlib)
     }
 
     /// Describe the active wire representation for human-readable diagnostics.
@@ -66,7 +67,7 @@ impl KittyBackend {
     pub const fn transport_label(&self) -> &'static str {
         match self.payload_format {
             KittyPayloadFormat::Png => "kitty-png",
-            KittyPayloadFormat::Rgba => "kitty-raw-rgba",
+            KittyPayloadFormat::RgbaZlib => "kitty-raw-rgba-zlib",
         }
     }
 
@@ -99,12 +100,18 @@ impl RenderBackend for KittyBackend {
     }
 
     fn render(&self, image: &DynamicImage, size: RenderSize, writer: &mut dyn Write) -> Result<()> {
-        let (format, width, height, bytes) = match self.payload_format {
-            KittyPayloadFormat::Png => (100, None, None, encode_png(image)?),
-            KittyPayloadFormat::Rgba => {
+        let (format, width, height, compression, bytes) = match self.payload_format {
+            KittyPayloadFormat::Png => (100, None, None, None, encode_png(image)?),
+            KittyPayloadFormat::RgbaZlib => {
                 let image = image.to_rgba8();
                 let (width, height) = image.dimensions();
-                (32, Some(width), Some(height), image.into_raw())
+                (
+                    32,
+                    Some(width),
+                    Some(height),
+                    Some("z"),
+                    compress_zlib(image.into_raw())?,
+                )
             }
         };
         let encoded = STANDARD.encode(bytes);
@@ -166,9 +173,11 @@ impl RenderBackend for KittyBackend {
                     (None, None) => String::new(),
                     _ => unreachable!("raw Kitty frames always include both dimensions"),
                 };
+                let compression =
+                    compression.map_or_else(String::new, |value| format!(",o={value}"));
                 write!(
                     writer,
-                    "\x1b_Ga=T,f={format},t=d,i={image_id},p={placement_id},c={columns},r={rows}{dimensions},C=1,q=2,m={more};{chunk}\x1b\\"
+                    "\x1b_Ga=T,f={format},t=d,i={image_id},p={placement_id},c={columns},r={rows}{dimensions}{compression},C=1,q=2,m={more};{chunk}\x1b\\"
                 )?;
             } else {
                 write!(writer, "\x1b_Gm={more};{chunk}\x1b\\")?;
@@ -187,6 +196,12 @@ impl RenderBackend for KittyBackend {
         {
             write!(writer, "\x1b_Ga=d,d=I,i={retained_image_id},q=2\x1b\\")?;
         }
+
+        // Do not leave a complete frame in a buffered stdout writer. The
+        // Windows fpasoterm PTY consumes Kitty chunks asynchronously; making
+        // the frame boundary explicit avoids waiting for a later status line
+        // before its first APC becomes readable.
+        writer.flush().context("flush Kitty Graphics frame")?;
 
         Ok(())
     }
@@ -214,4 +229,14 @@ fn encode_png(image: &DynamicImage) -> Result<Vec<u8>> {
         .write_to(&mut cursor, ImageFormat::Png)
         .context("encode screenshot as PNG for Kitty Graphics Protocol")?;
     Ok(cursor.into_inner())
+}
+
+fn compress_zlib(bytes: Vec<u8>) -> Result<Vec<u8>> {
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
+    encoder
+        .write_all(&bytes)
+        .context("compress raw RGBA for Kitty Graphics Protocol")?;
+    encoder
+        .finish()
+        .context("finish zlib-compressed Kitty Graphics payload")
 }

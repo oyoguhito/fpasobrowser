@@ -1,5 +1,6 @@
 use anyhow::Result;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use flate2::read::ZlibDecoder;
 use fpasobrowser::render::{
     kitty::KittyBackend, sixel::SixelBackend, BackendChoice, RenderBackend, RenderSize,
     SelectedBackend, TerminalCellPixels,
@@ -107,7 +108,7 @@ fn fpasoterm_kitty_backend_emits_raw_rgba_frames() -> Result<()> {
     );
     let mut output = Vec::new();
     let backend = KittyBackend::for_fpasoterm();
-    assert_eq!(backend.transport_label(), "kitty-raw-rgba");
+    assert_eq!(backend.transport_label(), "kitty-raw-rgba-zlib");
     backend.render(
         &image,
         RenderSize {
@@ -119,14 +120,18 @@ fn fpasoterm_kitty_backend_emits_raw_rgba_frames() -> Result<()> {
 
     let output = String::from_utf8(output)?;
     assert!(output.starts_with("\x1b[H\x1b_Ga=T,f=32,t=d,i="));
-    assert!(output.contains(",c=10,r=5,s=2,v=1,C=1,q=2,"));
+    assert!(output.contains(",c=10,r=5,s=2,v=1,o=z,C=1,q=2,"));
     let payload = output
         .split_once(';')
         .expect("Kitty transfer has a payload")
         .1
         .strip_suffix("\x1b\\")
         .expect("single small Kitty transfer has a terminator");
-    assert_eq!(STANDARD.decode(payload)?, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    let compressed = STANDARD.decode(payload)?;
+    let mut decoder = ZlibDecoder::new(compressed.as_slice());
+    let mut rgba = Vec::new();
+    std::io::Read::read_to_end(&mut decoder, &mut rgba)?;
+    assert_eq!(rgba, vec![1, 2, 3, 4, 5, 6, 7, 8]);
     Ok(())
 }
 

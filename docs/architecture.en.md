@@ -43,7 +43,8 @@ using the upper half-block character (`▀`):
 
 The Kitty backend sends the screenshot through Kitty Graphics Protocol and
 places it into terminal cells. It normally uses PNG; for fpasoterm it uses
-direct RGBA pixels to avoid a Windows WebView2 PNG-decode black-frame path.
+zlib-compressed direct RGBA pixels to avoid the Windows WebView2 ImageBitmap
+path and oversized Windows PTY writes.
 It has much higher fidelity than half-block, but requires a compatible
 terminal.
 

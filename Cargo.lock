@@ -1747,6 +1747,7 @@ dependencies = [
  "clap",
  "crossterm",
  "dpi",
+ "flate2",
  "image",
  "open",
  "rustls",

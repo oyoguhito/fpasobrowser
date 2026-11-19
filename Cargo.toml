@@ -25,6 +25,7 @@ base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 crossterm = { version = "0.28", optional = true }
 dpi = { version = "0.1", optional = true }
+flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 open = { version = "5", optional = true }
 rustls = { version = "0.23", default-features = false, optional = true }
