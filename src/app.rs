@@ -131,6 +131,15 @@ pub async fn run(url: Url, backend_choice: BackendChoice, options: AppOptions) -
         match run_once(url.clone(), backend_choice, options.clone()).await {
             Ok(()) => return Ok(()),
             Err(error) => {
+                if options.browser.debug {
+                    // The first Kitty frame is not written until BrowserClient
+                    // has reported ready.  Make that boundary explicit: a
+                    // terminal-side black view with this line is an embedded
+                    // Servo/runtime failure, not a Kitty decode failure.
+                    eprintln!(
+                        "fpasobrowser debug: browser run failed before a Kitty frame: {error:#}"
+                    );
+                }
                 eprintln!("fpasobrowser recovered from UI error: {error:#}");
                 // Keep an unexpected embedded-browser disconnect inside the TUI.
                 // Previously the loop immediately re-entered `run_once`; if
