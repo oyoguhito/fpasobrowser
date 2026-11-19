@@ -323,7 +323,13 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
     let mut browser_options = options.browser.clone();
     browser_options.terminal_cell_pixels = renderer.terminal_cell_pixels();
     if browser_options.debug {
-        eprintln!("fpasobrowser debug: terminal UI entered; launching browser");
+        eprintln!(
+            "fpasobrowser debug: terminal UI entered; backend={} transport={} pane={}x{}; launching browser",
+            renderer.name(),
+            renderer.transport_label(),
+            size.columns,
+            size.rows,
+        );
     }
     let mut browser = timeout(
         BROWSER_START_TIMEOUT,

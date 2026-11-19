@@ -119,6 +119,20 @@ impl SelectedBackend {
             }),
         }
     }
+
+    /// Describe the concrete wire representation used by the selected backend.
+    ///
+    /// This is deliberately separate from [`RenderBackend::name`]: both PNG
+    /// and raw-RGBA variants are Kitty Graphics, but Windows diagnostics need
+    /// to distinguish them.
+    #[must_use]
+    pub const fn transport_label(&self) -> &'static str {
+        match self {
+            Self::HalfBlock(_) => "ansi-half-block",
+            Self::Sixel(_) => "sixel",
+            Self::Kitty(backend) => backend.transport_label(),
+        }
+    }
 }
 
 fn fpasoterm_is_terminal() -> bool {

@@ -80,7 +80,9 @@ fn sixel_backend_emits_sixel_graphics_sequences() -> Result<()> {
 fn kitty_backend_emits_kitty_graphics_sequences() -> Result<()> {
     let image = DynamicImage::ImageRgba8(RgbaImage::new(1, 2));
     let mut output = Vec::new();
-    KittyBackend::new().render(
+    let backend = KittyBackend::new();
+    assert_eq!(backend.transport_label(), "kitty-png");
+    backend.render(
         &image,
         RenderSize {
             columns: 10,
@@ -104,7 +106,9 @@ fn fpasoterm_kitty_backend_emits_raw_rgba_frames() -> Result<()> {
         RgbaImage::from_raw(2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]).expect("test pixels fit the image"),
     );
     let mut output = Vec::new();
-    KittyBackend::for_fpasoterm().render(
+    let backend = KittyBackend::for_fpasoterm();
+    assert_eq!(backend.transport_label(), "kitty-raw-rgba");
+    backend.render(
         &image,
         RenderSize {
             columns: 10,

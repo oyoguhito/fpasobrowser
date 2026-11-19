@@ -61,6 +61,15 @@ impl KittyBackend {
         Self::with_payload_format(KittyPayloadFormat::Rgba)
     }
 
+    /// Describe the active wire representation for human-readable diagnostics.
+    #[must_use]
+    pub const fn transport_label(&self) -> &'static str {
+        match self.payload_format {
+            KittyPayloadFormat::Png => "kitty-png",
+            KittyPayloadFormat::Rgba => "kitty-raw-rgba",
+        }
+    }
+
     fn with_payload_format(payload_format: KittyPayloadFormat) -> Self {
         let scoped_id = KITTY_ID_NAMESPACE | (process::id() & 0x00ff_ffff);
         Self {
