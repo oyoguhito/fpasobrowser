@@ -105,6 +105,7 @@ struct RedrawOptions<'a> {
     input_mode: InputMode,
     message: &'a str,
     show_help: bool,
+    debug: bool,
     /// Monotonic frame counter used only for the loading activity indicator.
     /// It is deliberately independent of page rendering so SIXEL can keep its
     /// lower polling frequency without a separately animated terminal loop.
@@ -426,6 +427,7 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                             input_mode,
                             message: &message,
                             show_help,
+                            debug: browser_options.debug,
                             loading_frame,
                             dump_screenshot: options.dump_screenshot.as_deref(),
                         },
@@ -887,6 +889,7 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                                 input_mode,
                                 message: &hint_message,
                                 show_help,
+                                debug: browser_options.debug,
                                 loading_frame,
                                 dump_screenshot: options.dump_screenshot.as_deref(),
                             },
@@ -1808,6 +1811,15 @@ async fn redraw(
             return Err(error).context("capture browser screenshot");
         }
     };
+    if options.debug {
+        eprintln!(
+            "fpasobrowser debug: captured frame {}x{}; backend={} transport={}",
+            image.width(),
+            image.height(),
+            renderer.name(),
+            renderer.transport_label(),
+        );
+    }
     // Query all visible browser state in one engine round trip. This keeps the
     // URL, history affordances, and active tab label from one WebView snapshot.
     let tab_info = browser.tab_info().await.unwrap_or_default();
@@ -1841,6 +1853,15 @@ async fn redraw(
         }
         queue!(terminal.writer(), MoveTo(0, 0))?;
         renderer.render(&image, size, terminal.writer())?;
+        if options.debug {
+            eprintln!(
+                "fpasobrowser debug: emitted frame backend={} transport={} cells={}x{}",
+                renderer.name(),
+                renderer.transport_label(),
+                size.columns,
+                size.rows,
+            );
+        }
         if options.show_help {
             draw_help_panel(terminal, size)?;
         }
