@@ -109,7 +109,11 @@ impl SelectedBackend {
                 Some(cell_pixels) => sixel::SixelBackend::with_cell_pixels(cell_pixels),
                 None => sixel::SixelBackend::new(),
             }),
-            BackendChoice::Kitty => Self::Kitty(kitty::KittyBackend::new()),
+            BackendChoice::Kitty => Self::Kitty(if fpasoterm_is_terminal() {
+                kitty::KittyBackend::for_fpasoterm()
+            } else {
+                kitty::KittyBackend::new()
+            }),
         }
     }
 
@@ -125,6 +129,10 @@ impl SelectedBackend {
             Self::Kitty(backend) => backend.transport_label(),
         }
     }
+}
+
+fn fpasoterm_is_terminal() -> bool {
+    std::env::var("TERM_PROGRAM").is_ok_and(|value| value.eq_ignore_ascii_case("fpasoterm"))
 }
 
 impl RenderBackend for SelectedBackend {

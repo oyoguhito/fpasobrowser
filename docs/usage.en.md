@@ -207,6 +207,11 @@ Kitty Graphics Protocol in fpasoterm and other compatible terminals; use
 `--backend kitty` to force a
 compatible terminal that is not detected. `sixel` uses a 216-color SIXEL stream for
 SIXEL-capable terminals.
+
+In fpasoterm, frames are still standard Kitty PNG, but fpasobrowser does not
+issue its normal early retirement deletes. The fpasoterm receiver's bounded
+image store retires completed frames so a slow WebView2 decode is not cancelled
+before first paint.
 Its default 8×17-pixel cell estimate matches fpasoterm's Linux/ChromeOS grid,
 and also sizes Servo's dynamic viewport. That avoids upscaling the screenshot
 again in the SIXEL renderer while preserving status/tab/toolbar rows and

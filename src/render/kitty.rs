@@ -16,12 +16,17 @@ const KITTY_ID_NAMESPACE: u32 = 0x4600_0000;
 
 #[derive(Debug)]
 pub struct KittyBackend {
+    /// A normal terminal can release the frame from two updates ago as soon as
+    /// the next transfer is submitted. fpasoterm's WebView2 decoder is
+    /// asynchronous, however, and can still be decoding that frame when its
+    /// delete reaches the parser. In that mode the receiver's bounded image
+    /// store owns retirement instead.
+    retire_previous_frames: bool,
     /// The image for the newest frame.
     active_image_id: AtomicU32,
-    /// Keep the immediately preceding frame alive while the newest transfer is
-    /// decoded. Deleting it in the same PTY batch as a replacement can expose
-    /// a black interval in fpasoterm/Herdr even though the transfer appears
-    /// before the delete in the byte stream.
+    /// Track the immediately preceding frame for normal terminals, where it
+    /// remains visible while the newest transfer is decoded. The fpasoterm
+    /// policy leaves retirement to its bounded receiver instead.
     retained_image_id: AtomicU32,
     /// Geometry controls the Kitty placement footprint.  A retained frame at
     /// a different geometry cannot safely be kept as a visual fallback: its
@@ -34,8 +39,20 @@ pub struct KittyBackend {
 impl KittyBackend {
     #[must_use]
     pub fn new() -> Self {
+        Self::with_frame_retirement(true)
+    }
+
+    /// Use the standard PNG protocol for fpasoterm, while allowing its bounded
+    /// receiver to retire delayed frames after they have had a chance to paint.
+    #[must_use]
+    pub fn for_fpasoterm() -> Self {
+        Self::with_frame_retirement(false)
+    }
+
+    fn with_frame_retirement(retire_previous_frames: bool) -> Self {
         let scoped_id = KITTY_ID_NAMESPACE | (process::id() & 0x00ff_ffff);
         Self {
+            retire_previous_frames,
             active_image_id: AtomicU32::new(0),
             retained_image_id: AtomicU32::new(0),
             last_render_size: Mutex::new(None),
@@ -98,7 +115,7 @@ impl RenderBackend for KittyBackend {
         };
         let placement_id = self.next_placement_id.fetch_add(1, Ordering::Relaxed);
 
-        if geometry_changed {
+        if self.retire_previous_frames && geometry_changed {
             // fpasoterm defers this delete until the following replacement
             // has painted.  Sending it before the transfer lets that renderer
             // pair the two operations, while a different-sized stale frame is
@@ -135,7 +152,8 @@ impl RenderBackend for KittyBackend {
         // while this transfer is decoded. A distinct placement id is important
         // here: fpasoterm's deferred delete must remove only that retired
         // canvas, never the newest replacement or its one-frame fallback.
-        if !geometry_changed
+        if self.retire_previous_frames
+            && !geometry_changed
             && retained_image_id != 0
             && retained_image_id != previous_image_id
             && retained_image_id != image_id

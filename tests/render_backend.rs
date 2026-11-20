@@ -107,6 +107,25 @@ fn kitty_backend_emits_kitty_graphics_sequences() -> Result<()> {
 }
 
 #[test]
+fn fpasoterm_kitty_backend_defers_retiring_unpainted_frames() -> Result<()> {
+    let image = DynamicImage::ImageRgba8(RgbaImage::new(1, 2));
+    let backend = KittyBackend::for_fpasoterm();
+    let size = RenderSize {
+        columns: 10,
+        rows: 5,
+    };
+    let mut output = Vec::new();
+    backend.render(&image, size, &mut output)?;
+    backend.render(&image, size, &mut output)?;
+    backend.render(&image, size, &mut output)?;
+
+    let output = String::from_utf8(output)?;
+    assert_eq!(output.matches("a=T,f=100,t=d").count(), 3);
+    assert!(!output.contains("\x1b_Ga=d,d=I,i="));
+    Ok(())
+}
+
+#[test]
 fn kitty_backend_keeps_one_complete_frame_while_replacing() -> Result<()> {
     let image = DynamicImage::ImageRgba8(RgbaImage::new(1, 2));
     let backend = KittyBackend::new();

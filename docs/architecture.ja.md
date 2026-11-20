@@ -38,7 +38,8 @@ upper half-block character (`▀`) です。
 - background color = 下側pixel
 
 Kitty backend は圧縮済みPNG screenshot を Kitty Graphics Protocol で送り、terminal cell
-範囲に placement します。fpasoterm、Kitty、その他の対応terminalで同じ標準transportを使います。half-block より高品質ですが、
+範囲に placement します。fpasoterm、Kitty、その他の対応terminalで同じ標準transportを使います。fpasotermでは遅延したWebView2 decodeが
+描画前にdeleteされないよう、frame retirementをbounded receiverへ委ねます。half-block より高品質ですが、
 対応端末が必要です。
 
 SIXEL backendは画像を6×6×6 color cubeへquantizeしてSIXEL DCS streamとして出力します。

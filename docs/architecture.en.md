@@ -43,7 +43,9 @@ using the upper half-block character (`▀`):
 
 The Kitty backend sends a compact PNG screenshot through Kitty Graphics
 Protocol and places it into terminal cells. The same standard transport is
-used for fpasoterm, Kitty, and other compatible terminals.
+used for fpasoterm, Kitty, and other compatible terminals. fpasoterm defers
+sender-side retirement to its bounded receiver, preventing a delayed WebView2
+decode from being deleted before it paints.
 It has much higher fidelity than half-block, but requires a compatible
 terminal.
 

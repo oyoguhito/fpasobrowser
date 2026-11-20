@@ -102,7 +102,7 @@ LLVMは不要です。
 | `auto` | 既定。fpasoterm / Kittyを検出できれば`kitty`、それ以外は`half-block`を選択します。 |
 | `half-block` | ANSI truecolorのみを使う可搬性重視のfallbackです。 |
 | `sixel` | SIXEL対応terminal用の216色画像表示です。 |
-| `kitty` | Kitty Graphics Protocolで圧縮済みPNG画像を表示します。fpasotermを含む対応terminalで同じ標準transportを使います。 |
+| `kitty` | Kitty Graphics Protocolで圧縮済みPNG画像を表示します。fpasotermを含む対応terminalで同じ標準transportを使います。fpasotermでは非同期decode前にframeを削除しないよう、送信側でのframe retirementを遅延します。 |
 
 ## 操作
 

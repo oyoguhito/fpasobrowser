@@ -185,6 +185,9 @@ fpasotermが設定する`TERM_PROGRAM=fpasoterm`でKitty対応を検出すると
 含む対応terminalには、標準のKitty Graphics Protocolで圧縮済みPNGを転送します。
 それ以外では解像感は低くなりますがportableな `half-block` を選び、activity lineでfallback理由を表示します。
 自動検出されない対応terminalでは`--backend kitty`を明示指定できます。`sixel` はSIXEL対応terminal向けに216色SIXEL streamを出力します。
+
+fpasotermでも転送形式は標準Kitty PNGですが、fpasobrowserは通常の早期frame deleteを行いません。WebView2 decodeが遅延しても
+初回描画前にcancelされないよう、完了済みframeの退役はfpasotermのbounded image storeへ委ねます。
 既定ではfpasotermのLinux/ChromeOS gridとmouse座標に合う8×17 pixel cellを使い、Servoのdynamic
 viewportも同じ寸法にします。これによりSIXEL rendererでの二重拡大を避けます。異なるphysical cell
 寸法のterminalでは `--sixel-cell-size WIDTHxHEIGHT` または環境変数
