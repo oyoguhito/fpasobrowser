@@ -2,7 +2,7 @@ use super::{RenderBackend, RenderSize};
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use flate2::{write::ZlibEncoder, Compression};
-use image::{DynamicImage, ImageFormat};
+use image::{DynamicImage, ImageFormat, RgbaImage};
 use std::{
     io::{Cursor, Write},
     process,
@@ -260,14 +260,14 @@ impl RenderBackend for KittyBackend {
 
 fn encode_png(image: &DynamicImage) -> Result<Vec<u8>> {
     let mut cursor = Cursor::new(Vec::new());
-    image
+    DynamicImage::ImageRgba8(opaque_terminal_rgba(image))
         .write_to(&mut cursor, ImageFormat::Png)
         .context("encode screenshot as PNG for Kitty Graphics Protocol")?;
     Ok(cursor.into_inner())
 }
 
 fn compress_rgba(image: &DynamicImage) -> Result<Vec<u8>> {
-    let rgba = image.to_rgba8();
+    let rgba = opaque_terminal_rgba(image);
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
     encoder
         .write_all(&rgba.into_raw())
@@ -275,4 +275,18 @@ fn compress_rgba(image: &DynamicImage) -> Result<Vec<u8>> {
     encoder
         .finish()
         .context("finish compressed fpasoterm RGBA graphics payload")
+}
+
+/// Terminal graphics have no browser background beneath them. Servo's Windows
+/// software snapshot can retain meaningful RGB values while returning an
+/// all-zero alpha channel. ANSI half-block rendering ignores that alpha, but
+/// PNG and Canvas correctly treat it as fully transparent and leave the
+/// terminal's black background visible. Present every browser frame as an
+/// opaque terminal image so all backends use the same visible RGB content.
+fn opaque_terminal_rgba(image: &DynamicImage) -> RgbaImage {
+    let mut rgba = image.to_rgba8();
+    for pixel in rgba.pixels_mut() {
+        pixel[3] = u8::MAX;
+    }
+    rgba
 }

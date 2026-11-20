@@ -156,9 +156,15 @@ fn windows_fpasoterm_osc_envelopes_stay_below_the_conpty_legacy_limit() -> Resul
     let mut pixels = RgbaImage::new(32, 32);
     for (index, pixel) in pixels.pixels_mut().enumerate() {
         let value = u8::try_from((index * 73) % 251).expect("value is within a byte");
-        *pixel = image::Rgba([value, value.wrapping_mul(29), value.wrapping_mul(97), 255]);
+        // Servo's Windows software snapshot can retain page RGB values while
+        // reporting alpha=0. This matches the image that must remain visible
+        // through the Canvas graphics bridge.
+        *pixel = image::Rgba([value, value.wrapping_mul(29), value.wrapping_mul(97), 0]);
     }
-    let expected_pixels = pixels.as_raw().clone();
+    let expected_pixels = pixels
+        .pixels()
+        .flat_map(|pixel| [pixel[0], pixel[1], pixel[2], u8::MAX])
+        .collect::<Vec<_>>();
     let mut output = Vec::new();
     KittyBackend::for_windows_fpasoterm().render(
         &DynamicImage::ImageRgba8(pixels),
