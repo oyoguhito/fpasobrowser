@@ -142,9 +142,44 @@ fn windows_fpasoterm_backend_uses_osc_when_conpty_discards_kitty_apc() -> Result
 
     let output = String::from_utf8(output)?;
     assert!(output.starts_with("\x1b[H\x1b]777;graphics;v=1;a=T,f=100,t=d,i="));
-    assert!(output.contains(",c=10,r=5,C=1,q=2,m=0;"));
+    assert!(output.contains(",c=10,r=5,C=1,q=2,m="));
     assert!(!output.contains("\x1b_G"));
     assert!(output.ends_with("\x1b\\"));
+    Ok(())
+}
+
+#[test]
+fn windows_fpasoterm_osc_envelopes_stay_below_the_conpty_legacy_limit() -> Result<()> {
+    let mut pixels = RgbaImage::new(32, 32);
+    for (index, pixel) in pixels.pixels_mut().enumerate() {
+        let value = u8::try_from((index * 73) % 251).expect("value is within a byte");
+        *pixel = image::Rgba([value, value.wrapping_mul(29), value.wrapping_mul(97), 255]);
+    }
+    let mut output = Vec::new();
+    KittyBackend::for_windows_fpasoterm().render(
+        &DynamicImage::ImageRgba8(pixels),
+        RenderSize {
+            columns: 140,
+            rows: 48,
+        },
+        &mut output,
+    )?;
+
+    let output = String::from_utf8(output)?;
+    let envelopes: Vec<_> = output
+        .strip_prefix("\x1b[H")
+        .expect("the image anchor precedes the bridge payload")
+        .split("\x1b\\")
+        .filter(|envelope| !envelope.is_empty())
+        .collect();
+    assert!(
+        envelopes.len() > 1,
+        "the test image must span bridge chunks"
+    );
+    assert!(envelopes.iter().all(|envelope| envelope.len() < 256));
+    assert!(envelopes
+        .iter()
+        .all(|envelope| envelope.starts_with("\x1b]777;graphics;v=1;")));
     Ok(())
 }
 

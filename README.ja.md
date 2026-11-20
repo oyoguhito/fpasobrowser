@@ -100,6 +100,10 @@ Diagnosticsを`graphics`でfilterすると、最初のframeで
 `fpasoterm graphics transfer received`と`fpasoterm graphics rendered`が出ます。前者が
 出ない場合はfpasotermもこのbridge対応版へ更新してください。
 
+Windows ConPTYの長いOSC sequenceが壊れる既知の経路を避けるため、bridgeはPNGを短い
+OSC packetへ分割して送ります。`decode failed`時はDiagnosticsに`png-bytes`、`signature`、
+`iend`も表示されるため、transport途中で欠けた画像かWebViewの画像decodeかを区別できます。
+
 Windows release archiveを展開した場合は、同じdirectoryの`fpasobrowser.cmd`から起動します。
 archiveには`fpasobrowser.exe`、`libEGL.dll`、`libGLESv2.dll`が含まれるため、Cargo、Python、
 LLVMは不要です。

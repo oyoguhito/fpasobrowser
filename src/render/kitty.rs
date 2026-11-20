@@ -12,6 +12,11 @@ use std::{
 };
 
 const CHUNK_SIZE: usize = 4096;
+// Older and some remote Windows ConPTY paths corrupt OSC sequences longer
+// than 256 bytes.  The bridge header consumes roughly 90 bytes on a wide
+// pane, so retain ample room for the ST terminator and keep its base64 slice
+// deliberately small.  Native Kitty APC keeps its efficient 4 KiB chunks.
+const FPASOTERM_OSC_CHUNK_SIZE: usize = 96;
 const KITTY_ID_NAMESPACE: u32 = 0x4600_0000;
 
 /// The Windows ConPTY path consumes APC sequences (`ESC _ ... ESC \\`) before
@@ -105,6 +110,13 @@ impl KittyBackend {
         }
         Ok(())
     }
+
+    const fn chunk_size(&self) -> usize {
+        match self.transport {
+            KittyTransport::StandardApc => CHUNK_SIZE,
+            KittyTransport::FpasotermOsc => FPASOTERM_OSC_CHUNK_SIZE,
+        }
+    }
 }
 
 impl Default for KittyBackend {
@@ -173,8 +185,9 @@ impl RenderBackend for KittyBackend {
         // APC transfer so scroll/navigation frames cannot inherit that status
         // row and visibly drift down the pane.
         write!(writer, "\x1b[H")?;
-        for (index, chunk) in encoded.as_bytes().chunks(CHUNK_SIZE).enumerate() {
-            let more = u8::from((index + 1) * CHUNK_SIZE < encoded.len());
+        let chunk_size = self.chunk_size();
+        for (index, chunk) in encoded.as_bytes().chunks(chunk_size).enumerate() {
+            let more = u8::from((index + 1) * chunk_size < encoded.len());
             let chunk = std::str::from_utf8(chunk).context("base64 chunk should be UTF-8")?;
             let control = if index == 0 {
                 format!(
