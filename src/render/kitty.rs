@@ -14,8 +14,19 @@ use std::{
 const CHUNK_SIZE: usize = 4096;
 const KITTY_ID_NAMESPACE: u32 = 0x4600_0000;
 
+/// The Windows ConPTY path consumes APC sequences (`ESC _ ... ESC \\`) before
+/// they reach the terminal host.  fpasoterm's Windows renderer therefore
+/// accepts the same bounded Kitty command/payload pair inside its private OSC
+/// 777 channel.  Other terminals continue to receive the standard protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KittyTransport {
+    StandardApc,
+    FpasotermOsc,
+}
+
 #[derive(Debug)]
 pub struct KittyBackend {
+    transport: KittyTransport,
     /// A normal terminal can release the frame from two updates ago as soon as
     /// the next transfer is submitted. fpasoterm's WebView2 decoder is
     /// asynchronous, however, and can still be decoding that frame when its
@@ -39,19 +50,29 @@ pub struct KittyBackend {
 impl KittyBackend {
     #[must_use]
     pub fn new() -> Self {
-        Self::with_frame_retirement(true)
+        Self::with_frame_retirement(true, KittyTransport::StandardApc)
     }
 
     /// Use the standard PNG protocol for fpasoterm, while allowing its bounded
     /// receiver to retire delayed frames after they have had a chance to paint.
     #[must_use]
     pub fn for_fpasoterm() -> Self {
-        Self::with_frame_retirement(false)
+        Self::with_frame_retirement(false, KittyTransport::StandardApc)
     }
 
-    fn with_frame_retirement(retire_previous_frames: bool) -> Self {
+    /// Use fpasoterm's OSC bridge on Windows.  ConPTY discards the APC
+    /// introducer used by the Kitty Graphics Protocol, whereas OSC 777 reaches
+    /// the renderer unchanged.  The bridge validates and decodes the exact
+    /// same Kitty PNG command/payload representation as the APC handler.
+    #[must_use]
+    pub fn for_windows_fpasoterm() -> Self {
+        Self::with_frame_retirement(false, KittyTransport::FpasotermOsc)
+    }
+
+    fn with_frame_retirement(retire_previous_frames: bool, transport: KittyTransport) -> Self {
         let scoped_id = KITTY_ID_NAMESPACE | (process::id() & 0x00ff_ffff);
         Self {
+            transport,
             retire_previous_frames,
             active_image_id: AtomicU32::new(0),
             retained_image_id: AtomicU32::new(0),
@@ -64,7 +85,25 @@ impl KittyBackend {
     /// Describe the active wire representation for human-readable diagnostics.
     #[must_use]
     pub const fn transport_label(&self) -> &'static str {
-        "kitty-png"
+        match self.transport {
+            KittyTransport::StandardApc => "kitty-png",
+            KittyTransport::FpasotermOsc => "fpasoterm-osc-png",
+        }
+    }
+
+    fn write_delete(&self, writer: &mut dyn Write, image_id: u32) -> Result<()> {
+        match self.transport {
+            KittyTransport::StandardApc => {
+                write!(writer, "\x1b_Ga=d,d=I,i={image_id},q=2\x1b\\")?;
+            }
+            KittyTransport::FpasotermOsc => {
+                write!(
+                    writer,
+                    "\x1b]777;graphics;v=1;a=d,d=I,i={image_id},q=2;\x1b\\"
+                )?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -122,7 +161,7 @@ impl RenderBackend for KittyBackend {
             // never retained long enough to overlap the new bottom/right edge.
             for stale_image_id in [previous_image_id, retained_image_id] {
                 if stale_image_id != 0 && stale_image_id != image_id {
-                    write!(writer, "\x1b_Ga=d,d=I,i={stale_image_id},q=2\x1b\\")?;
+                    self.write_delete(writer, stale_image_id)?;
                 }
             }
         }
@@ -137,13 +176,20 @@ impl RenderBackend for KittyBackend {
         for (index, chunk) in encoded.as_bytes().chunks(CHUNK_SIZE).enumerate() {
             let more = u8::from((index + 1) * CHUNK_SIZE < encoded.len());
             let chunk = std::str::from_utf8(chunk).context("base64 chunk should be UTF-8")?;
-            if index == 0 {
-                write!(
-                    writer,
-                    "\x1b_Ga=T,f=100,t=d,i={image_id},p={placement_id},c={columns},r={rows},C=1,q=2,m={more};{chunk}\x1b\\"
-                )?;
+            let control = if index == 0 {
+                format!(
+                    "a=T,f=100,t=d,i={image_id},p={placement_id},c={columns},r={rows},C=1,q=2,m={more}"
+                )
             } else {
-                write!(writer, "\x1b_Gm={more};{chunk}\x1b\\")?;
+                format!("m={more}")
+            };
+            match self.transport {
+                KittyTransport::StandardApc => {
+                    write!(writer, "\x1b_G{control};{chunk}\x1b\\")?;
+                }
+                KittyTransport::FpasotermOsc => {
+                    write!(writer, "\x1b]777;graphics;v=1;{control};{chunk}\x1b\\")?;
+                }
             }
         }
 
@@ -158,7 +204,7 @@ impl RenderBackend for KittyBackend {
             && retained_image_id != previous_image_id
             && retained_image_id != image_id
         {
-            write!(writer, "\x1b_Ga=d,d=I,i={retained_image_id},q=2\x1b\\")?;
+            self.write_delete(writer, retained_image_id)?;
         }
 
         // Do not leave a complete frame in a buffered stdout writer. The
@@ -178,10 +224,10 @@ impl RenderBackend for KittyBackend {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
         if image_id != 0 {
-            write!(writer, "\x1b_Ga=d,d=I,i={image_id},q=2\x1b\\")?;
+            self.write_delete(writer, image_id)?;
         }
         if retained_image_id != 0 && retained_image_id != image_id {
-            write!(writer, "\x1b_Ga=d,d=I,i={retained_image_id},q=2\x1b\\")?;
+            self.write_delete(writer, retained_image_id)?;
         }
         Ok(())
     }

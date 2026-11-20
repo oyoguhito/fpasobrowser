@@ -126,6 +126,29 @@ fn fpasoterm_kitty_backend_defers_retiring_unpainted_frames() -> Result<()> {
 }
 
 #[test]
+fn windows_fpasoterm_backend_uses_osc_when_conpty_discards_kitty_apc() -> Result<()> {
+    let image = DynamicImage::ImageRgba8(RgbaImage::new(1, 2));
+    let backend = KittyBackend::for_windows_fpasoterm();
+    let mut output = Vec::new();
+    assert_eq!(backend.transport_label(), "fpasoterm-osc-png");
+    backend.render(
+        &image,
+        RenderSize {
+            columns: 10,
+            rows: 5,
+        },
+        &mut output,
+    )?;
+
+    let output = String::from_utf8(output)?;
+    assert!(output.starts_with("\x1b[H\x1b]777;graphics;v=1;a=T,f=100,t=d,i="));
+    assert!(output.contains(",c=10,r=5,C=1,q=2,m=0;"));
+    assert!(!output.contains("\x1b_G"));
+    assert!(output.ends_with("\x1b\\"));
+    Ok(())
+}
+
+#[test]
 fn kitty_backend_keeps_one_complete_frame_while_replacing() -> Result<()> {
     let image = DynamicImage::ImageRgba8(RgbaImage::new(1, 2));
     let backend = KittyBackend::new();

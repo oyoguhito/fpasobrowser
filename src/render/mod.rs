@@ -110,7 +110,11 @@ impl SelectedBackend {
                 None => sixel::SixelBackend::new(),
             }),
             BackendChoice::Kitty => Self::Kitty(if fpasoterm_is_terminal() {
-                kitty::KittyBackend::for_fpasoterm()
+                if cfg!(target_os = "windows") && fpasoterm_osc_transport_is_available() {
+                    kitty::KittyBackend::for_windows_fpasoterm()
+                } else {
+                    kitty::KittyBackend::for_fpasoterm()
+                }
             } else {
                 kitty::KittyBackend::new()
             }),
@@ -133,6 +137,11 @@ impl SelectedBackend {
 
 fn fpasoterm_is_terminal() -> bool {
     std::env::var("TERM_PROGRAM").is_ok_and(|value| value.eq_ignore_ascii_case("fpasoterm"))
+}
+
+fn fpasoterm_osc_transport_is_available() -> bool {
+    std::env::var("FPASOTERM_GRAPHICS_TRANSPORT")
+        .is_ok_and(|value| value.eq_ignore_ascii_case("osc-v1"))
 }
 
 impl RenderBackend for SelectedBackend {

@@ -84,12 +84,21 @@ source buildの前に、launcherの診断を実行できます。
 .\fpasobrowser.cmd --backend half-block --debug
 ```
 
-Kitty Graphics Protocolが使えるfpasotermまたはKittyでは、引数なしの`auto`が`kitty`を
-選びます。自動検出されない対応terminalでは、明示的に指定できます。
+Kitty Graphics Protocolが使えるKitty、またはgraphics bridgeをadvertiseするfpasotermでは、
+引数なしの`auto`が`kitty`を選びます。Windows版fpasotermではConPTYがKittyのAPCを
+破棄するため、current fpasotermがchild processへ通知する`osc-v1` bridgeを使います。
+古いfpasotermでは黒い画面を出さず`half-block`へfallbackします。自動検出されない
+対応terminalでは、明示的に指定できます。
 
 ```powershell
 .\fpasobrowser.cmd --backend kitty --debug
 ```
+
+Windows上のfpasoterm内では、`--debug`に
+`backend=kitty transport=fpasoterm-osc-png`が出ることを確認してください。fpasotermの
+Diagnosticsを`graphics`でfilterすると、最初のframeで
+`fpasoterm graphics transfer received`と`fpasoterm graphics rendered`が出ます。前者が
+出ない場合はfpasotermもこのbridge対応版へ更新してください。
 
 Windows release archiveを展開した場合は、同じdirectoryの`fpasobrowser.cmd`から起動します。
 archiveには`fpasobrowser.exe`、`libEGL.dll`、`libGLESv2.dll`が含まれるため、Cargo、Python、
@@ -99,10 +108,10 @@ LLVMは不要です。
 
 | backend | 用途 |
 | --- | --- |
-| `auto` | 既定。fpasoterm / Kittyを検出できれば`kitty`、それ以外は`half-block`を選択します。 |
+| `auto` | 既定。Kitty、またはbridge対応のfpasotermを検出できれば`kitty`、それ以外は`half-block`を選択します。Windowsで古いfpasotermを検出した場合も`half-block`へfallbackします。 |
 | `half-block` | ANSI truecolorのみを使う可搬性重視のfallbackです。 |
 | `sixel` | SIXEL対応terminal用の216色画像表示です。 |
-| `kitty` | Kitty Graphics Protocolで圧縮済みPNG画像を表示します。fpasotermを含む対応terminalで同じ標準transportを使います。fpasotermでは非同期decode前にframeを削除しないよう、送信側でのframe retirementを遅延します。 |
+| `kitty` | 圧縮済みPNG画像をterminal cellへ配置します。KittyとWindows以外のfpasotermには標準Kitty Graphics Protocol (APC) を使います。Windows fpasotermではConPTYがAPCを破棄するため、同じ上限付きKitty PNG command/payloadをprivate OSC bridgeで送ります。debug表示は`fpasoterm-osc-png`です。fpasotermでは非同期decode前にframeを削除しないよう、送信側でのframe retirementを遅延します。 |
 
 ## 操作
 

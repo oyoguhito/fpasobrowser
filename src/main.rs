@@ -259,8 +259,10 @@ struct BackendSelection {
 /// be issued before a TUI takes ownership of terminal input. Use positive
 /// identifiers that are inherited by child processes instead: Kitty exposes
 /// `KITTY_WINDOW_ID`/an `xterm-kitty` TERM and fpasoterm sets
-/// `TERM_PROGRAM=fpasoterm`. Unknown terminals deliberately fall back rather
-/// than receiving opaque Kitty APC escape sequences.
+/// `TERM_PROGRAM=fpasoterm`. On Windows, fpasoterm additionally advertises
+/// its `osc-v1` graphics bridge because ConPTY consumes Kitty APC sequences.
+/// Unknown terminals deliberately fall back rather than receiving opaque
+/// graphics escape sequences.
 fn select_backend(requested: Option<BackendChoice>) -> BackendSelection {
     select_backend_from_environment(requested, |name| std::env::var(name).ok())
 }
@@ -273,6 +275,12 @@ where
     F: Fn(&str) -> Option<String>,
 {
     match requested {
+        Some(BackendChoice::Kitty) if legacy_windows_fpasoterm(&environment) => BackendSelection {
+            choice: BackendChoice::HalfBlock,
+            initial_activity: Some(String::from(
+                "Windows fpasoterm graphics bridge is unavailable; using half-block (update fpasoterm)",
+            )),
+        },
         Some(choice @ (BackendChoice::HalfBlock | BackendChoice::Sixel | BackendChoice::Kitty)) => {
             BackendSelection {
                 choice,
@@ -298,9 +306,28 @@ fn kitty_graphics_is_advertised<F>(environment: &F) -> bool
 where
     F: Fn(&str) -> Option<String>,
 {
+    if environment("TERM_PROGRAM").is_some_and(|value| value.eq_ignore_ascii_case("fpasoterm")) {
+        return !cfg!(target_os = "windows") || fpasoterm_osc_bridge_is_advertised(environment);
+    }
     environment("KITTY_WINDOW_ID").is_some_and(|value| !value.trim().is_empty())
         || environment("TERM").is_some_and(|value| value.eq_ignore_ascii_case("xterm-kitty"))
-        || environment("TERM_PROGRAM").is_some_and(|value| value.eq_ignore_ascii_case("fpasoterm"))
+}
+
+fn legacy_windows_fpasoterm<F>(environment: &F) -> bool
+where
+    F: Fn(&str) -> Option<String>,
+{
+    cfg!(target_os = "windows")
+        && environment("TERM_PROGRAM").is_some_and(|value| value.eq_ignore_ascii_case("fpasoterm"))
+        && !fpasoterm_osc_bridge_is_advertised(environment)
+}
+
+fn fpasoterm_osc_bridge_is_advertised<F>(environment: &F) -> bool
+where
+    F: Fn(&str) -> Option<String>,
+{
+    environment("FPASOTERM_GRAPHICS_TRANSPORT")
+        .is_some_and(|value| value.eq_ignore_ascii_case("osc-v1"))
 }
 
 /// Create a portable, self-contained start page for URL-less launches.
@@ -387,9 +414,12 @@ mod tests {
 
     #[test]
     fn auto_backend_prefers_kitty_in_fpasoterm() {
-        let selection = select_backend_from_environment(Some(BackendChoice::Auto), |name| {
-            (name == "TERM_PROGRAM").then(|| String::from("fpasoterm"))
-        });
+        let selection =
+            select_backend_from_environment(Some(BackendChoice::Auto), |name| match name {
+                "TERM_PROGRAM" => Some(String::from("fpasoterm")),
+                "FPASOTERM_GRAPHICS_TRANSPORT" => Some(String::from("osc-v1")),
+                _ => None,
+            });
         assert_eq!(selection.choice, BackendChoice::Kitty);
         assert_eq!(selection.initial_activity, None);
     }
@@ -407,6 +437,13 @@ mod tests {
         let selection = select_backend_from_environment(Some(BackendChoice::Kitty), |_| None);
         assert_eq!(selection.choice, BackendChoice::Kitty);
         assert_eq!(selection.initial_activity, None);
+    }
+
+    #[test]
+    fn fpasoterm_osc_bridge_capability_is_recognized() {
+        assert!(fpasoterm_osc_bridge_is_advertised(&|name| {
+            (name == "FPASOTERM_GRAPHICS_TRANSPORT").then(|| String::from("osc-v1"))
+        }));
     }
 
     #[test]

@@ -175,9 +175,12 @@ use direct Cargo only after setting the two environment variables above.
 
 The omitted backend automatically selects high-resolution `kitty` when the
 terminal advertises it (including fpasoterm), and otherwise selects portable
-`half-block`. In PowerShell or Windows Terminal, the activity line explains
-that Kitty Graphics was not detected. To force a Kitty-capable terminal that
-does not advertise itself, use:
+`half-block`. On Windows, fpasoterm advertises its required `osc-v1` image
+bridge to a child process; an older fpasoterm without that capability is
+deliberately treated as `half-block` rather than receiving an invisible Kitty
+APC stream. In PowerShell or Windows Terminal, the activity line explains why
+the fallback was selected. To force a verified Kitty-capable terminal that does
+not advertise itself, use:
 
 ```powershell
 .\fpasobrowser.cmd --backend kitty
@@ -419,10 +422,10 @@ Controls:
 
 | Backend | Status | Characteristics |
 | --- | --- | --- |
-| `auto` | Default / available | Selects `kitty` when `KITTY_WINDOW_ID`, `TERM=xterm-kitty`, or fpasoterm's `TERM_PROGRAM=fpasoterm` advertises support; otherwise selects `half-block` and explains the fallback in the activity line. |
+| `auto` | Default / available | Selects `kitty` when `KITTY_WINDOW_ID`, `TERM=xterm-kitty`, or fpasoterm advertises support. On Windows, that fpasoterm advertisement also requires `FPASOTERM_GRAPHICS_TRANSPORT=osc-v1`; otherwise it selects `half-block` and explains the fallback in the activity line. |
 | `half-block` | Available | ANSI truecolor renderer using `▀`. Works in ordinary modern terminals and does not need Kitty/SIXEL/iTerm2 image protocols. Lower fidelity than real image protocols. |
 | `sixel` | Available | Encodes the screenshot as a 216-color SIXEL image. Its default 8×17-pixel cell estimate matches fpasoterm's Linux/ChromeOS terminal grid. Servo's dynamic viewport uses exactly the same geometry, so the screenshot is not enlarged again during SIXEL presentation and mouse coordinates remain aligned while preserving the three UI lines. Use `--sixel-cell-size WIDTHxHEIGHT` (or `FPASOBROWSER_SIXEL_CELL_SIZE`) when another SIXEL terminal uses different physical cell dimensions; the toolbar shows the active value. Full-frame updates are deduplicated, hover redraw is suppressed, and loading is polled at a lower rate so click navigation finishes without idle flicker. |
-| `kitty` | Available | Sends compact PNG screenshots through Kitty Graphics Protocol and places them in terminal cells. The same standard Kitty PNG transport is used in fpasoterm, Kitty, and other compatible terminals. In fpasoterm, sender-side frame retirement is deferred so its bounded asynchronous receiver cannot delete a frame before it paints. Use it explicitly to force a compatible terminal that does not advertise support. |
+| `kitty` | Available | Sends compact PNG screenshots and places them in terminal cells. Kitty and non-Windows fpasoterm receive the standard Kitty Graphics Protocol (APC) transport. Windows fpasoterm receives the same bounded Kitty PNG command/payload through its private OSC bridge because ConPTY drops APC before a host can read it; its debug label is `fpasoterm-osc-png`. In fpasoterm, sender-side frame retirement is deferred so its bounded asynchronous receiver cannot delete a frame before it paints. |
 
 ## Documentation
 
@@ -437,8 +440,8 @@ Controls:
   exposed yet.
 - Scrolling currently re-captures the page after moving `window.scrollY`.
 - Image quality with `half-block` is intentionally limited. The omitted
-  backend auto-selects `kitty` in detected fpasoterm/Kitty terminals and uses
-  `half-block` with an activity-line notice everywhere else.
+  backend auto-selects `kitty` in Kitty and bridge-capable fpasoterm terminals,
+  and uses `half-block` with an activity-line notice everywhere else.
 - Windows Terminal does not currently support Kitty Graphics Protocol or SIXEL,
   so native Windows Terminal uses `half-block`. SIXEL-capable Windows terminals
   can use `--backend sixel`.
