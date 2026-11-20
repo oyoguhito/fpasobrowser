@@ -181,9 +181,8 @@ fpasobrowser https://example.com/
 ```
 
 引数を省略したbackendと明示的な`--backend auto`は、`KITTY_WINDOW_ID`、`TERM=xterm-kitty`、または
-fpasotermが設定する`TERM_PROGRAM=fpasoterm`でKitty対応を検出すると、`kitty` を選びます。通常はPNGを
-転送しますが、fpasotermではWindows WebView2のImageBitmap経路と大きすぎるWindows PTY writeを避けるため
-zlib圧縮したdirect RGBA pixelを転送します。
+fpasotermが設定する`TERM_PROGRAM=fpasoterm`でKitty対応を検出すると、`kitty` を選びます。fpasotermを
+含む対応terminalには、標準のKitty Graphics Protocolで圧縮済みPNGを転送します。
 それ以外では解像感は低くなりますがportableな `half-block` を選び、activity lineでfallback理由を表示します。
 自動検出されない対応terminalでは`--backend kitty`を明示指定できます。`sixel` はSIXEL対応terminal向けに216色SIXEL streamを出力します。
 既定ではfpasotermのLinux/ChromeOS gridとmouse座標に合う8×17 pixel cellを使い、Servoのdynamic

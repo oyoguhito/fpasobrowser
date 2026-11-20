@@ -41,10 +41,9 @@ using the upper half-block character (`▀`):
 - foreground color = upper pixel
 - background color = lower pixel
 
-The Kitty backend sends the screenshot through Kitty Graphics Protocol and
-places it into terminal cells. It normally uses PNG; for fpasoterm it uses
-zlib-compressed direct RGBA pixels to avoid the Windows WebView2 ImageBitmap
-path and oversized Windows PTY writes.
+The Kitty backend sends a compact PNG screenshot through Kitty Graphics
+Protocol and places it into terminal cells. The same standard transport is
+used for fpasoterm, Kitty, and other compatible terminals.
 It has much higher fidelity than half-block, but requires a compatible
 terminal.
 

@@ -1,6 +1,4 @@
 use anyhow::Result;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use flate2::read::ZlibDecoder;
 use fpasobrowser::render::{
     kitty::KittyBackend, sixel::SixelBackend, BackendChoice, RenderBackend, RenderSize,
     SelectedBackend, TerminalCellPixels,
@@ -18,6 +16,13 @@ fn explicit_half_block_selects_half_block_backend() {
     let backend = SelectedBackend::from_choice(BackendChoice::HalfBlock);
     assert_eq!(backend.name(), "half-block");
     assert!(!backend.frame_transport_is_expensive());
+}
+
+#[test]
+fn explicit_kitty_uses_standard_png_transport() {
+    let backend = SelectedBackend::from_choice(BackendChoice::Kitty);
+    assert_eq!(backend.name(), "kitty");
+    assert_eq!(backend.transport_label(), "kitty-png");
 }
 
 #[test]
@@ -98,40 +103,6 @@ fn kitty_backend_emits_kitty_graphics_sequences() -> Result<()> {
     assert!(!output.contains("\x1b_Ga=d,d=I,i="));
     assert!(output.contains(";"));
     assert!(output.ends_with("\x1b\\"));
-    Ok(())
-}
-
-#[test]
-fn fpasoterm_kitty_backend_emits_raw_rgba_frames() -> Result<()> {
-    let image = DynamicImage::ImageRgba8(
-        RgbaImage::from_raw(2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]).expect("test pixels fit the image"),
-    );
-    let mut output = Vec::new();
-    let backend = KittyBackend::for_fpasoterm();
-    assert_eq!(backend.transport_label(), "kitty-raw-rgba-zlib");
-    backend.render(
-        &image,
-        RenderSize {
-            columns: 10,
-            rows: 5,
-        },
-        &mut output,
-    )?;
-
-    let output = String::from_utf8(output)?;
-    assert!(output.starts_with("\x1b[H\x1b_Ga=T,f=32,t=d,i="));
-    assert!(output.contains(",c=10,r=5,s=2,v=1,o=z,C=1,q=2,"));
-    let payload = output
-        .split_once(';')
-        .expect("Kitty transfer has a payload")
-        .1
-        .strip_suffix("\x1b\\")
-        .expect("single small Kitty transfer has a terminator");
-    let compressed = STANDARD.decode(payload)?;
-    let mut decoder = ZlibDecoder::new(compressed.as_slice());
-    let mut rgba = Vec::new();
-    std::io::Read::read_to_end(&mut decoder, &mut rgba)?;
-    assert_eq!(rgba, vec![1, 2, 3, 4, 5, 6, 7, 8]);
     Ok(())
 }
 

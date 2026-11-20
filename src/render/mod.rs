@@ -109,22 +109,14 @@ impl SelectedBackend {
                 Some(cell_pixels) => sixel::SixelBackend::with_cell_pixels(cell_pixels),
                 None => sixel::SixelBackend::new(),
             }),
-            BackendChoice::Kitty => Self::Kitty(if fpasoterm_is_terminal() {
-                // fpasoterm's raw-RGBA decoder is also the path used by
-                // terminal-browser.  Prefer it over WebView2's PNG decoder,
-                // which can otherwise paint a black canvas on Windows.
-                kitty::KittyBackend::for_fpasoterm()
-            } else {
-                kitty::KittyBackend::new()
-            }),
+            BackendChoice::Kitty => Self::Kitty(kitty::KittyBackend::new()),
         }
     }
 
     /// Describe the concrete wire representation used by the selected backend.
     ///
-    /// This is deliberately separate from [`RenderBackend::name`]: both PNG
-    /// and raw-RGBA variants are Kitty Graphics, but Windows diagnostics need
-    /// to distinguish them.
+    /// This is deliberately separate from [`RenderBackend::name`] so
+    /// diagnostics identify the concrete terminal wire format.
     #[must_use]
     pub const fn transport_label(&self) -> &'static str {
         match self {
@@ -133,10 +125,6 @@ impl SelectedBackend {
             Self::Kitty(backend) => backend.transport_label(),
         }
     }
-}
-
-fn fpasoterm_is_terminal() -> bool {
-    std::env::var("TERM_PROGRAM").is_ok_and(|value| value.eq_ignore_ascii_case("fpasoterm"))
 }
 
 impl RenderBackend for SelectedBackend {
