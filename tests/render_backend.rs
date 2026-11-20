@@ -1,9 +1,12 @@
 use anyhow::Result;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use flate2::read::ZlibDecoder;
 use fpasobrowser::render::{
     kitty::KittyBackend, sixel::SixelBackend, BackendChoice, RenderBackend, RenderSize,
     SelectedBackend, TerminalCellPixels,
 };
 use image::{DynamicImage, RgbaImage};
+use std::io::Read;
 
 #[test]
 fn auto_selects_half_block_backend() {
@@ -130,7 +133,7 @@ fn windows_fpasoterm_backend_uses_osc_when_conpty_discards_kitty_apc() -> Result
     let image = DynamicImage::ImageRgba8(RgbaImage::new(1, 2));
     let backend = KittyBackend::for_windows_fpasoterm();
     let mut output = Vec::new();
-    assert_eq!(backend.transport_label(), "fpasoterm-osc-png");
+    assert_eq!(backend.transport_label(), "fpasoterm-osc-rgba-zlib");
     backend.render(
         &image,
         RenderSize {
@@ -141,8 +144,8 @@ fn windows_fpasoterm_backend_uses_osc_when_conpty_discards_kitty_apc() -> Result
     )?;
 
     let output = String::from_utf8(output)?;
-    assert!(output.starts_with("\x1b[H\x1b]777;graphics;v=1;a=T,f=100,t=d,i="));
-    assert!(output.contains(",c=10,r=5,C=1,q=2,m="));
+    assert!(output.starts_with("\x1b[H\x1b]777;graphics;v=1;a=T,f=32,t=d,i="));
+    assert!(output.contains(",c=10,r=5,s=1,v=2,o=z,C=1,q=2,m="));
     assert!(!output.contains("\x1b_G"));
     assert!(output.ends_with("\x1b\\"));
     Ok(())
@@ -155,6 +158,7 @@ fn windows_fpasoterm_osc_envelopes_stay_below_the_conpty_legacy_limit() -> Resul
         let value = u8::try_from((index * 73) % 251).expect("value is within a byte");
         *pixel = image::Rgba([value, value.wrapping_mul(29), value.wrapping_mul(97), 255]);
     }
+    let expected_pixels = pixels.as_raw().clone();
     let mut output = Vec::new();
     KittyBackend::for_windows_fpasoterm().render(
         &DynamicImage::ImageRgba8(pixels),
@@ -180,6 +184,21 @@ fn windows_fpasoterm_osc_envelopes_stay_below_the_conpty_legacy_limit() -> Resul
     assert!(envelopes
         .iter()
         .all(|envelope| envelope.starts_with("\x1b]777;graphics;v=1;")));
+    let encoded = envelopes
+        .iter()
+        .map(|envelope| {
+            envelope
+                .strip_prefix("\x1b]777;graphics;v=1;")
+                .expect("the OSC envelope has the graphics bridge prefix")
+                .split_once(';')
+                .expect("each graphics envelope has a control/payload separator")
+                .1
+        })
+        .collect::<String>();
+    let compressed = STANDARD.decode(encoded)?;
+    let mut decoded = Vec::new();
+    ZlibDecoder::new(compressed.as_slice()).read_to_end(&mut decoded)?;
+    assert_eq!(decoded, expected_pixels);
     Ok(())
 }
 

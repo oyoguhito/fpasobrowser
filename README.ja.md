@@ -95,14 +95,15 @@ Kitty Graphics Protocolが使えるKitty、またはgraphics bridgeをadvertise�
 ```
 
 Windows上のfpasoterm内では、`--debug`に
-`backend=kitty transport=fpasoterm-osc-png`が出ることを確認してください。fpasotermの
+`backend=kitty transport=fpasoterm-osc-rgba-zlib`が出ることを確認してください。fpasotermの
 Diagnosticsを`graphics`でfilterすると、最初のframeで
 `fpasoterm graphics transfer received`と`fpasoterm graphics rendered`が出ます。前者が
 出ない場合はfpasotermもこのbridge対応版へ更新してください。
 
-Windows ConPTYの長いOSC sequenceが壊れる既知の経路を避けるため、bridgeはPNGを短い
-OSC packetへ分割して送ります。`decode failed`時はDiagnosticsに`png-bytes`、`signature`、
-`iend`も表示されるため、transport途中で欠けた画像かWebViewの画像decodeかを区別できます。
+Windows ConPTYの長いOSC sequenceが壊れる既知の経路を避けるため、bridgeはpayloadを短い
+OSC packetへ分割して送ります。bridgeではWebView2のPNG合成を通さず、zlib圧縮したraw RGBA
+（`format=32`、`compression=z`）をfpasotermのCanvasへ直接描画します。成功時は
+`paint=raw-rgba-putImageData`が表示されます。
 
 Windows release archiveを展開した場合は、同じdirectoryの`fpasobrowser.cmd`から起動します。
 archiveには`fpasobrowser.exe`、`libEGL.dll`、`libGLESv2.dll`が含まれるため、Cargo、Python、
@@ -115,7 +116,7 @@ LLVMは不要です。
 | `auto` | 既定。Kitty、またはbridge対応のfpasotermを検出できれば`kitty`、それ以外は`half-block`を選択します。Windowsで古いfpasotermを検出した場合も`half-block`へfallbackします。 |
 | `half-block` | ANSI truecolorのみを使う可搬性重視のfallbackです。 |
 | `sixel` | SIXEL対応terminal用の216色画像表示です。 |
-| `kitty` | 圧縮済みPNG画像をterminal cellへ配置します。KittyとWindows以外のfpasotermには標準Kitty Graphics Protocol (APC) を使います。Windows fpasotermではConPTYがAPCを破棄するため、同じ上限付きKitty PNG command/payloadをprivate OSC bridgeで送ります。debug表示は`fpasoterm-osc-png`です。fpasotermでは非同期decode前にframeを削除しないよう、送信側でのframe retirementを遅延します。 |
+| `kitty` | 圧縮済みPNG画像をterminal cellへ配置します。KittyとWindows以外のfpasotermには標準Kitty Graphics Protocol (APC) を使います。Windows fpasotermではConPTYがAPCを破棄するため、zlib圧縮したraw RGBA（`f=32`）をprivate OSC bridgeで送ってCanvasへ直接描画します。debug表示は`fpasoterm-osc-rgba-zlib`です。fpasotermでは非同期描画前にframeを削除しないよう、送信側でのframe retirementを遅延します。 |
 
 ## 操作
 

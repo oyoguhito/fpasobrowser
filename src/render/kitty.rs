@@ -1,6 +1,7 @@
 use super::{RenderBackend, RenderSize};
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use flate2::{write::ZlibEncoder, Compression};
 use image::{DynamicImage, ImageFormat};
 use std::{
     io::{Cursor, Write},
@@ -21,8 +22,8 @@ const KITTY_ID_NAMESPACE: u32 = 0x4600_0000;
 
 /// The Windows ConPTY path consumes APC sequences (`ESC _ ... ESC \\`) before
 /// they reach the terminal host.  fpasoterm's Windows renderer therefore
-/// accepts the same bounded Kitty command/payload pair inside its private OSC
-/// 777 channel.  Other terminals continue to receive the standard protocol.
+/// accepts a bounded Kitty command/payload pair inside its private OSC 777
+/// channel.  Other terminals continue to receive the standard protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KittyTransport {
     StandardApc,
@@ -65,10 +66,11 @@ impl KittyBackend {
         Self::with_frame_retirement(false, KittyTransport::StandardApc)
     }
 
-    /// Use fpasoterm's OSC bridge on Windows.  ConPTY discards the APC
+    /// Use fpasoterm's OSC bridge on Windows. ConPTY discards the APC
     /// introducer used by the Kitty Graphics Protocol, whereas OSC 777 reaches
-    /// the renderer unchanged.  The bridge validates and decodes the exact
-    /// same Kitty PNG command/payload representation as the APC handler.
+    /// the renderer unchanged. The bridge sends zlib-compressed RGBA so
+    /// fpasoterm can use its direct `putImageData` renderer and avoid the
+    /// Windows WebView2 PNG compositor path.
     #[must_use]
     pub fn for_windows_fpasoterm() -> Self {
         Self::with_frame_retirement(false, KittyTransport::FpasotermOsc)
@@ -92,7 +94,7 @@ impl KittyBackend {
     pub const fn transport_label(&self) -> &'static str {
         match self.transport {
             KittyTransport::StandardApc => "kitty-png",
-            KittyTransport::FpasotermOsc => "fpasoterm-osc-png",
+            KittyTransport::FpasotermOsc => "fpasoterm-osc-rgba-zlib",
         }
     }
 
@@ -135,7 +137,10 @@ impl RenderBackend for KittyBackend {
     }
 
     fn render(&self, image: &DynamicImage, size: RenderSize, writer: &mut dyn Write) -> Result<()> {
-        let encoded = STANDARD.encode(encode_png(image)?);
+        let encoded = match self.transport {
+            KittyTransport::StandardApc => STANDARD.encode(encode_png(image)?),
+            KittyTransport::FpasotermOsc => STANDARD.encode(compress_rgba(image)?),
+        };
         let columns = size.columns.max(1);
         let rows = size.rows.max(1);
         let previous_size = {
@@ -190,9 +195,16 @@ impl RenderBackend for KittyBackend {
             let more = u8::from((index + 1) * chunk_size < encoded.len());
             let chunk = std::str::from_utf8(chunk).context("base64 chunk should be UTF-8")?;
             let control = if index == 0 {
-                format!(
-                    "a=T,f=100,t=d,i={image_id},p={placement_id},c={columns},r={rows},C=1,q=2,m={more}"
-                )
+                match self.transport {
+                    KittyTransport::StandardApc => format!(
+                        "a=T,f=100,t=d,i={image_id},p={placement_id},c={columns},r={rows},C=1,q=2,m={more}"
+                    ),
+                    KittyTransport::FpasotermOsc => format!(
+                        "a=T,f=32,t=d,i={image_id},p={placement_id},c={columns},r={rows},s={},v={},o=z,C=1,q=2,m={more}",
+                        image.width(),
+                        image.height(),
+                    ),
+                }
             } else {
                 format!("m={more}")
             };
@@ -252,4 +264,15 @@ fn encode_png(image: &DynamicImage) -> Result<Vec<u8>> {
         .write_to(&mut cursor, ImageFormat::Png)
         .context("encode screenshot as PNG for Kitty Graphics Protocol")?;
     Ok(cursor.into_inner())
+}
+
+fn compress_rgba(image: &DynamicImage) -> Result<Vec<u8>> {
+    let rgba = image.to_rgba8();
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
+    encoder
+        .write_all(&rgba.into_raw())
+        .context("compress raw RGBA for fpasoterm graphics bridge")?;
+    encoder
+        .finish()
+        .context("finish compressed fpasoterm RGBA graphics payload")
 }
