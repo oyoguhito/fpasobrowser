@@ -1820,21 +1820,12 @@ async fn redraw(
             return Err(error).context("capture browser screenshot");
         }
     };
-    if options.debug {
-        let summary = frame_debug_summary(&image);
-        eprintln!(
-            "fpasobrowser debug: captured frame {}x{}; backend={} transport={}; samples={} rgb-nonblack={} alpha-zero={} alpha-partial={} alpha-opaque={} kitty-alpha=forced-opaque",
-            image.width(),
-            image.height(),
-            renderer.name(),
-            renderer.transport_label(),
-            summary.samples,
-            summary.rgb_nonblack,
-            summary.alpha_zero,
-            summary.alpha_partial,
-            summary.alpha_opaque,
-        );
-    }
+    // `terminal.clear()` below deliberately removes ordinary terminal output
+    // before the first image placement. Keep the sampled source-frame summary
+    // until after that clear, alongside the already-visible emitted-frame
+    // line, so `--debug` diagnostics cannot be erased before the user sees
+    // them.
+    let debug_summary = options.debug.then(|| frame_debug_summary(&image));
     // Query all visible browser state in one engine round trip. This keeps the
     // URL, history affordances, and active tab label from one WebView snapshot.
     let tab_info = browser.tab_info().await.unwrap_or_default();
@@ -1869,12 +1860,18 @@ async fn redraw(
         queue!(terminal.writer(), MoveTo(0, 0))?;
         renderer.render(&image, size, terminal.writer())?;
         if options.debug {
+            let summary = debug_summary.expect("debug frame summary is available");
             eprintln!(
-                "fpasobrowser debug: emitted frame backend={} transport={} cells={}x{}",
+                "fpasobrowser debug: emitted frame backend={} transport={} cells={}x{}; source-samples={} source-rgb-nonblack={} source-alpha-zero={} source-alpha-partial={} source-alpha-opaque={} kitty-alpha=forced-opaque",
                 renderer.name(),
                 renderer.transport_label(),
                 size.columns,
                 size.rows,
+                summary.samples,
+                summary.rgb_nonblack,
+                summary.alpha_zero,
+                summary.alpha_partial,
+                summary.alpha_opaque,
             );
         }
         if options.show_help {
