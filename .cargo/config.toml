@@ -1,0 +1,12 @@
+# Embedded Servo has large native artifacts. Three project-local build jobs keep
+# memory bounded while allowing WebRender's shader generator to obtain a Cargo
+# jobserver token during a cold build. One or two jobs can leave it waiting
+# indefinitely after an invalidated cache.
+[build]
+jobs = 3
+
+# Use mold through clang on Linux/ChromeOS Linux. This target-specific setting
+# leaves Windows and macOS on their platform toolchains.
+[target.'cfg(target_os = "linux")']
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=/usr/bin/mold"]

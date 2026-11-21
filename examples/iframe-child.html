@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iframe child input test</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: system-ui, sans-serif;
+      color: #101827;
+      background: #eef6ff;
+    }
+    body { margin: 0; padding: 24px; line-height: 1.5; }
+    label { display: block; font-weight: 800; margin-bottom: 8px; }
+    input {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 12px 14px;
+      border: 2px solid #3974d9;
+      border-radius: 10px;
+      font-size: 22px;
+    }
+    button {
+      margin-top: 14px;
+      padding: 12px 18px;
+      border: 0;
+      border-radius: 999px;
+      background: #3974d9;
+      color: white;
+      font-weight: 800;
+      font-size: 18px;
+    }
+    input:focus, button:focus {
+      outline: 4px solid #21d4fd;
+      outline-offset: 3px;
+    }
+    #result { min-height: 28px; color: #075a36; font-weight: 800; }
+  </style>
+</head>
+<body>
+  <label for="embedded-query">Embedded input</label>
+  <input id="embedded-query" placeholder="Press i or click here, then type">
+  <button id="embedded-submit">Submit embedded input</button>
+  <p id="result">Embedded result appears here.</p>
+  <p><a href="iframe-result.html">Open iframe navigation result</a></p>
+  <script>
+    const input = document.querySelector('#embedded-query');
+    const result = document.querySelector('#result');
+    const submit = () => {
+      result.textContent = `Embedded: ${input.value || '(empty)'}`;
+    };
+    document.querySelector('#embedded-submit').addEventListener('click', submit);
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') submit();
+    });
+  </script>
+</body>
+</html>
