@@ -45,6 +45,8 @@ prerequisites for the host and replaces `target/debug/fpasobrowser` with a
 fresh build. It does not launch the terminal UI, so it is suitable for a first
 install or CI-like setup. The initial Servo build can take a while and uses
 substantial disk space.
+If a stale release `fpasobrowser.exe` remains in the checkout root, source
+launchers and the installer still prefer `target/debug/fpasobrowser.exe`.
 
 ```sh
 ./install.sh

@@ -55,5 +55,8 @@ if ($NoBuild) {
     exit 0
 }
 
-& (Join-Path $repoDir "fpasobrowser.cmd") --rebuild
+# Call the source launcher directly. `fpasobrowser.cmd` also supports a
+# release archive, where a root fpasobrowser.exe is correct; an installer in a
+# source checkout must not select that stale copy instead of target\debug.
+& (Join-Path $repoDir "bin\fpasobrowser.ps1") --rebuild
 exit $LASTEXITCODE

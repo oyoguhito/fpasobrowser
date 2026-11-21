@@ -46,6 +46,8 @@ PowerShellではcurrent directoryを自動検索しないため、`fpasobrowser.
 
 source checkoutでは、OSに必要なbuild toolを導入してlocal debug binaryを毎回更新する
 installerを使えます。既存の`target\\debug\\fpasobrowser.exe`があっても置き換えます。
+checkout rootに古いrelease版`fpasobrowser.exe`が残っていても、source launcherとinstallerは
+`target\\debug\\fpasobrowser.exe`を優先します。
 初回のServo buildは大きく、時間とdisk spaceを必要とします。
 
 ```sh
