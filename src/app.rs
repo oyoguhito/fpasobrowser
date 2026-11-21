@@ -127,6 +127,15 @@ struct PresentationFingerprint {
     show_help: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FrameDebugSummary {
+    samples: usize,
+    rgb_nonblack: usize,
+    alpha_zero: usize,
+    alpha_partial: usize,
+    alpha_opaque: usize,
+}
+
 pub async fn run(url: Url, backend_choice: BackendChoice, options: AppOptions) -> Result<()> {
     loop {
         match run_once(url.clone(), backend_choice, options.clone()).await {
@@ -1812,12 +1821,18 @@ async fn redraw(
         }
     };
     if options.debug {
+        let summary = frame_debug_summary(&image);
         eprintln!(
-            "fpasobrowser debug: captured frame {}x{}; backend={} transport={}",
+            "fpasobrowser debug: captured frame {}x{}; backend={} transport={}; samples={} rgb-nonblack={} alpha-zero={} alpha-partial={} alpha-opaque={} kitty-alpha=forced-opaque",
             image.width(),
             image.height(),
             renderer.name(),
             renderer.transport_label(),
+            summary.samples,
+            summary.rgb_nonblack,
+            summary.alpha_zero,
+            summary.alpha_partial,
+            summary.alpha_opaque,
         );
     }
     // Query all visible browser state in one engine round trip. This keeps the
@@ -1911,6 +1926,38 @@ async fn redraw(
     Ok(RedrawOutcome {
         is_loading: tab_info.is_loading,
     })
+}
+
+/// Summarize enough source pixels to distinguish an all-black Servo capture
+/// from a compositor/presentation failure without writing page pixels to the
+/// diagnostic log. The Kitty renderer makes its final terminal image opaque;
+/// alpha counts here describe the frame as Servo delivered it.
+fn frame_debug_summary(image: &DynamicImage) -> FrameDebugSummary {
+    const MAX_SAMPLES: usize = 4096;
+
+    let rgba = image.to_rgba8();
+    let total = rgba.pixels().len();
+    let stride = (total / MAX_SAMPLES).max(1);
+    let mut summary = FrameDebugSummary {
+        samples: 0,
+        rgb_nonblack: 0,
+        alpha_zero: 0,
+        alpha_partial: 0,
+        alpha_opaque: 0,
+    };
+
+    for pixel in rgba.pixels().step_by(stride) {
+        summary.samples += 1;
+        if pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0 {
+            summary.rgb_nonblack += 1;
+        }
+        match pixel[3] {
+            0 => summary.alpha_zero += 1,
+            u8::MAX => summary.alpha_opaque += 1,
+            _ => summary.alpha_partial += 1,
+        }
+    }
+    summary
 }
 
 fn presentation_fingerprint(
@@ -2279,7 +2326,7 @@ fn draw_help_panel(terminal: &mut Terminal, size: crate::render::RenderSize) -> 
 mod tests {
     use super::{
         active_tab_status, compose_activity_status, format_hover_status,
-        format_link_hint_activation, loading_indicator, loading_redraw_delay,
+        format_link_hint_activation, frame_debug_summary, loading_indicator, loading_redraw_delay,
         normalize_primary_mouse_command, open_in_regular_browser, presentation_fingerprint,
         schedule_scroll_redraw, should_clear_before_frame, tab_strip_row, tab_strip_target,
         tab_strip_text, toolbar_row, toolbar_text, working_status, TabStripAction,
@@ -2324,6 +2371,32 @@ mod tests {
 
         let changed = DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 2, Rgba([4, 5, 6, 255])));
         assert_ne!(same, presentation_fingerprint(&changed, size, false));
+    }
+
+    #[test]
+    fn frame_debug_summary_reports_rgb_and_alpha_without_logging_pixels() {
+        let image = DynamicImage::ImageRgba8(
+            RgbaImage::from_raw(
+                2,
+                2,
+                vec![
+                    1, 2, 3, 0, // RGB source with transparent alpha from a software snapshot.
+                    0, 0, 0, 255, 4, 5, 6, 127, 0, 0, 0, 255,
+                ],
+            )
+            .expect("valid RGBA dimensions"),
+        );
+
+        assert_eq!(
+            frame_debug_summary(&image),
+            super::FrameDebugSummary {
+                samples: 4,
+                rgb_nonblack: 2,
+                alpha_zero: 1,
+                alpha_partial: 1,
+                alpha_opaque: 2,
+            }
+        );
     }
 
     #[test]
