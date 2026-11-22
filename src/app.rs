@@ -59,6 +59,10 @@ const HOVER_UPDATE_MIN_INTERVAL: Duration = Duration::from_millis(70);
 const HOVER_TIMEOUT: Duration = Duration::from_millis(350);
 const FOCUS_BLUR_TIMEOUT: Duration = Duration::from_millis(350);
 const INPUT_MODE_KEY_SUPPRESS_WINDOW: Duration = Duration::from_millis(350);
+// A key or pointer activation can synchronously start page navigation. It
+// needs more than a regular editing key, but an incomplete reply is not
+// evidence that the single Servo owner thread has died.
+const PAGE_ACTIVATION_TIMEOUT: Duration = Duration::from_secs(4);
 // Keyboard scrolling remains a useful page-sized movement, but wheel events
 // arrive in several terminal reports for one physical notch. Keep the latter
 // deliberately smaller so one wheel gesture does not skip interactive content.
@@ -1075,11 +1079,12 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
             }
             Command::BrowserKey(key) => {
                 show_working(&mut terminal, size, &format!("sending key {key}"))?;
-                let key_result = timeout(
-                    Duration::from_millis(1_200),
-                    browser.press_key_with_fallback(key),
-                )
-                .await;
+                let key_timeout = if key == "Enter" {
+                    PAGE_ACTIVATION_TIMEOUT
+                } else {
+                    Duration::from_millis(1_200)
+                };
+                let key_result = timeout(key_timeout, browser.press_key_with_fallback(key)).await;
                 match key_result {
                     Ok(Ok(())) => {
                         suppress_initial_input_key_until = None;
@@ -1104,12 +1109,18 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                         needs_redraw = true;
                     }
                     Err(_) => {
-                        message = format!("key {key} timed out; press r to relaunch, q to quit");
-                        browser_connected = false;
+                        // `timeout` only means this request's reply has not
+                        // arrived. The serialized engine may still be loading
+                        // a page; declaring it disconnected here stranded a
+                        // healthy Enter navigation on the recovery screen.
                         input_mode = InputMode::Normal;
+                        suppress_initial_input_key_until = None;
+                        message = format!(
+                            "key {key} is still processing; waiting for the page (Esc leaves input mode)"
+                        );
                         terminal.status(size.rows, &message)?;
                         terminal.flush()?;
-                        needs_redraw = true;
+                        schedule_redraw_burst(&mut pending_redraw_at, &mut redraw_burst_remaining);
                     }
                 }
             }
@@ -1453,10 +1464,9 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                     terminal.status(size.rows, &message)?;
                     terminal.flush()?;
                 } else if row < size.rows {
-                    const CLICK_TIMEOUT: Duration = Duration::from_millis(1_200);
                     show_working(&mut terminal, size, "handling mouse click")?;
                     let click_result =
-                        timeout(CLICK_TIMEOUT, browser.click_js(column, row, size)).await;
+                        timeout(PAGE_ACTIVATION_TIMEOUT, browser.click_js(column, row, size)).await;
                     match click_result {
                         Err(_) => {
                             // A delayed Servo click can still finish on its
@@ -1467,11 +1477,15 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                             // the explicit o/v command remains available
                             // when a regular-browser handoff is desired.
                             message = String::from(
-                                "click is still processing; wait briefly or press r to redraw (o/v opens a regular browser)",
+                                "click is still processing; waiting for the page (Esc leaves input mode)",
                             );
                             input_mode = InputMode::Normal;
                             terminal.status(size.rows, &message)?;
                             terminal.flush()?;
+                            schedule_redraw_burst(
+                                &mut pending_redraw_at,
+                                &mut redraw_burst_remaining,
+                            );
                         }
                         Ok(click_result) => match click_result {
                             Ok(outcome) => {

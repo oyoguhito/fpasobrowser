@@ -1026,23 +1026,10 @@ fn engine_loop(
                 }
                 send_key(webview, &key);
                 pump(servo, webview, 2);
-                // Cargo-embedded Servo can deliver the page keydown event
-                // while failing to perform the HTML default form action for
-                // a search textarea (Google uses this pattern). Keep the
-                // native key path first, then submit only a search-like form
-                // that is still idle. Ordinary textareas deliberately retain
-                // their newline behavior.
-                let submitted_search_form = key == "Enter"
-                    && webview.load_status() == LoadStatus::Complete
-                    && submit_focused_search_form(servo, webview).unwrap_or(false);
-                if submitted_search_form {
-                    pump(servo, webview, 4);
-                }
-                let navigation_in_flight =
-                    submitted_search_form || webview.load_status() != LoadStatus::Complete;
+                let navigation_in_flight = webview.load_status() != LoadStatus::Complete;
                 if debug && key == "Enter" {
                     eprintln!(
-                        "fpasobrowser debug: Enter dispatched; search-form fallback submitted={submitted_search_form} navigation-in-flight={navigation_in_flight} load-status={:?}",
+                        "fpasobrowser debug: Enter dispatched; navigation-in-flight={navigation_in_flight} load-status={:?}",
                         webview.load_status(),
                     );
                 }
@@ -1728,49 +1715,6 @@ fn send_key(webview: &WebView, key: &str) {
         };
         webview.notify_input_event(InputEvent::Keyboard(event(KeyState::Down, key.clone())));
         webview.notify_input_event(InputEvent::Keyboard(event(KeyState::Up, key)));
-    }
-}
-
-/// Submit a focused search control when Servo dispatched Enter but did not run
-/// the control's HTML default action. Search pages commonly implement their
-/// visible query box as a `textarea[role=combobox]`; treating every textarea
-/// this way would break intentional newlines, so the fallback is deliberately
-/// limited to search-like controls that belong to a form.
-fn submit_focused_search_form(servo: &Servo, webview: &WebView) -> Result<bool> {
-    const SCRIPT: &str = r#"(() => {
-      const active = document.activeElement;
-      if (!active || active.disabled || active.readOnly || active.isContentEditable) return false;
-      const tag = (active.tagName || '').toLowerCase();
-      const type = (active.getAttribute('type') || 'text').toLowerCase();
-      const role = (active.getAttribute('role') || '').toLowerCase();
-      const hint = (active.getAttribute('enterkeyhint') || '').toLowerCase();
-      const isSearchInput = tag === 'input' && !['button', 'checkbox', 'file', 'hidden', 'image', 'radio', 'reset', 'submit'].includes(type);
-      const isSearchTextarea = tag === 'textarea' && (role === 'searchbox' || role === 'combobox' || ['search', 'go', 'send', 'done'].includes(hint));
-      if (!isSearchInput && !isSearchTextarea) return false;
-      const form = active.form || active.closest('form');
-      if (!form) return false;
-      const submitter = form.querySelector('button[type="submit"]:not([disabled]), input[type="submit"]:not([disabled])');
-      try {
-        if (typeof form.requestSubmit === 'function') {
-          form.requestSubmit(submitter || undefined);
-          return true;
-        }
-      } catch (_) {}
-      try {
-        if (submitter && typeof submitter.click === 'function') {
-          submitter.click();
-          return true;
-        }
-        if (typeof form.submit === 'function') {
-          form.submit();
-          return true;
-        }
-      } catch (_) {}
-      return false;
-    })()"#;
-    match evaluate_javascript(servo, webview, SCRIPT)? {
-        JSValue::Boolean(submitted) => Ok(submitted),
-        other => bail!("unexpected focused-search submit result from Servo: {other:?}"),
     }
 }
 
