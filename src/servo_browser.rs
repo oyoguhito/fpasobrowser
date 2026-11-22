@@ -540,7 +540,14 @@ fn run_engine(
         let popup_requests = Rc::new(RefCell::new(Vec::new()));
         let first_tab = create_engine_tab(&servo, viewport, initial_url, popup_requests.clone())?;
         ready_sender.send(Ok(())).ok();
-        engine_loop(receiver, &servo, vec![first_tab], viewport, popup_requests);
+        engine_loop(
+            receiver,
+            &servo,
+            vec![first_tab],
+            viewport,
+            popup_requests,
+            debug,
+        );
         Ok(())
     }));
     match result {
@@ -692,6 +699,7 @@ fn engine_loop(
     mut tabs: Vec<EngineTab>,
     mut viewport: BrowserViewport,
     popup_requests: PopupRequests,
+    debug: bool,
 ) {
     let mut active = 0_usize;
     loop {
@@ -966,6 +974,24 @@ fn engine_loop(
                 }
                 send_key(webview, &key);
                 pump(servo, webview, 2);
+                // Cargo-embedded Servo can deliver the page keydown event
+                // while failing to perform the HTML default form action for
+                // a search textarea (Google uses this pattern). Keep the
+                // native key path first, then submit only a search-like form
+                // that is still idle. Ordinary textareas deliberately retain
+                // their newline behavior.
+                let submitted_search_form = key == "Enter"
+                    && webview.load_status() == LoadStatus::Complete
+                    && submit_focused_search_form(servo, webview).unwrap_or(false);
+                if submitted_search_form {
+                    pump(servo, webview, 4);
+                }
+                if debug && key == "Enter" {
+                    eprintln!(
+                        "fpasobrowser debug: Enter dispatched; search-form fallback submitted={submitted_search_form} load-status={:?}",
+                        webview.load_status()
+                    );
+                }
                 let _ = refresh_focus_indicator(servo, webview);
                 let _ = reply.send(Ok(()));
             }
@@ -1593,17 +1619,33 @@ fn wait_for_navigation_frame(
 }
 
 fn send_key(webview: &WebView, key: &str) {
-    let (named, modifiers) = match key {
-        "Enter" => (Some(NamedKey::Enter), Modifiers::empty()),
-        "Tab" => (Some(NamedKey::Tab), Modifiers::empty()),
-        "Shift+Tab" => (Some(NamedKey::Tab), Modifiers::SHIFT),
-        "Backspace" => (Some(NamedKey::Backspace), Modifiers::empty()),
-        "Delete" => (Some(NamedKey::Delete), Modifiers::empty()),
-        "ArrowLeft" => (Some(NamedKey::ArrowLeft), Modifiers::empty()),
-        "ArrowRight" => (Some(NamedKey::ArrowRight), Modifiers::empty()),
-        "ArrowUp" => (Some(NamedKey::ArrowUp), Modifiers::empty()),
-        "ArrowDown" => (Some(NamedKey::ArrowDown), Modifiers::empty()),
-        _ => (None, Modifiers::empty()),
+    let (named, code, modifiers) = match key {
+        "Enter" => (Some(NamedKey::Enter), Code::Enter, Modifiers::empty()),
+        "Tab" => (Some(NamedKey::Tab), Code::Tab, Modifiers::empty()),
+        "Shift+Tab" => (Some(NamedKey::Tab), Code::Tab, Modifiers::SHIFT),
+        "Backspace" => (
+            Some(NamedKey::Backspace),
+            Code::Backspace,
+            Modifiers::empty(),
+        ),
+        "Delete" => (Some(NamedKey::Delete), Code::Delete, Modifiers::empty()),
+        "ArrowLeft" => (
+            Some(NamedKey::ArrowLeft),
+            Code::ArrowLeft,
+            Modifiers::empty(),
+        ),
+        "ArrowRight" => (
+            Some(NamedKey::ArrowRight),
+            Code::ArrowRight,
+            Modifiers::empty(),
+        ),
+        "ArrowUp" => (Some(NamedKey::ArrowUp), Code::ArrowUp, Modifiers::empty()),
+        "ArrowDown" => (
+            Some(NamedKey::ArrowDown),
+            Code::ArrowDown,
+            Modifiers::empty(),
+        ),
+        _ => (None, Code::Unidentified, Modifiers::empty()),
     };
     if let Some(named) = named {
         let key = Key::Named(named);
@@ -1611,7 +1653,7 @@ fn send_key(webview: &WebView, key: &str) {
             KeyboardEvent::new_without_event(
                 state,
                 key,
-                Code::Unidentified,
+                code,
                 Location::Standard,
                 modifiers,
                 false,
@@ -1620,6 +1662,49 @@ fn send_key(webview: &WebView, key: &str) {
         };
         webview.notify_input_event(InputEvent::Keyboard(event(KeyState::Down, key.clone())));
         webview.notify_input_event(InputEvent::Keyboard(event(KeyState::Up, key)));
+    }
+}
+
+/// Submit a focused search control when Servo dispatched Enter but did not run
+/// the control's HTML default action. Search pages commonly implement their
+/// visible query box as a `textarea[role=combobox]`; treating every textarea
+/// this way would break intentional newlines, so the fallback is deliberately
+/// limited to search-like controls that belong to a form.
+fn submit_focused_search_form(servo: &Servo, webview: &WebView) -> Result<bool> {
+    const SCRIPT: &str = r#"(() => {
+      const active = document.activeElement;
+      if (!active || active.disabled || active.readOnly || active.isContentEditable) return false;
+      const tag = (active.tagName || '').toLowerCase();
+      const type = (active.getAttribute('type') || 'text').toLowerCase();
+      const role = (active.getAttribute('role') || '').toLowerCase();
+      const hint = (active.getAttribute('enterkeyhint') || '').toLowerCase();
+      const isSearchInput = tag === 'input' && !['button', 'checkbox', 'file', 'hidden', 'image', 'radio', 'reset', 'submit'].includes(type);
+      const isSearchTextarea = tag === 'textarea' && (role === 'searchbox' || role === 'combobox' || ['search', 'go', 'send', 'done'].includes(hint));
+      if (!isSearchInput && !isSearchTextarea) return false;
+      const form = active.form || active.closest('form');
+      if (!form) return false;
+      const submitter = form.querySelector('button[type="submit"]:not([disabled]), input[type="submit"]:not([disabled])');
+      try {
+        if (typeof form.requestSubmit === 'function') {
+          form.requestSubmit(submitter || undefined);
+          return true;
+        }
+      } catch (_) {}
+      try {
+        if (submitter && typeof submitter.click === 'function') {
+          submitter.click();
+          return true;
+        }
+        if (typeof form.submit === 'function') {
+          form.submit();
+          return true;
+        }
+      } catch (_) {}
+      return false;
+    })()"#;
+    match evaluate_javascript(servo, webview, SCRIPT)? {
+        JSValue::Boolean(submitted) => Ok(submitted),
+        other => bail!("unexpected focused-search submit result from Servo: {other:?}"),
     }
 }
 
