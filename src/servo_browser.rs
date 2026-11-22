@@ -23,7 +23,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{self, Receiver, Sender},
-        Arc,
+        Arc, Mutex,
     },
     thread,
     time::Duration,
@@ -63,7 +63,10 @@ pub struct BrowserClient {
 struct EngineHandle {
     sender: Sender<EngineCommand>,
     worker: Option<thread::JoinHandle<()>>,
+    exit_reason: EngineExitReason,
 }
+
+type EngineExitReason = Arc<Mutex<Option<String>>>;
 
 impl Drop for EngineHandle {
     fn drop(&mut self) {
@@ -72,6 +75,21 @@ impl Drop for EngineHandle {
 }
 
 impl EngineHandle {
+    async fn request<T, F>(&self, command: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(Sender<Result<T>>) -> EngineCommand + Send + 'static,
+    {
+        request(self.sender.clone(), self.exit_reason.clone(), command).await
+    }
+
+    async fn request_unit<F>(&self, command: F) -> Result<()>
+    where
+        F: FnOnce(Sender<Result<()>>) -> EngineCommand + Send + 'static,
+    {
+        self.request(command).await
+    }
+
     fn shutdown(&mut self) {
         let _ = self.sender.send(EngineCommand::Shutdown);
         // A WebView can be inside a platform/Servo callback when a terminal
@@ -317,9 +335,20 @@ impl BrowserClient {
         let (sender, receiver) = mpsc::channel();
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
         let debug = options.debug;
+        let exit_reason = Arc::new(Mutex::new(None));
+        let worker_exit_reason = exit_reason.clone();
         let worker = thread::Builder::new()
             .name("fpasobrowser-servo".to_owned())
-            .spawn(move || run_engine(receiver, viewport, debug, initial_url, ready_sender))
+            .spawn(move || {
+                run_engine(
+                    receiver,
+                    viewport,
+                    debug,
+                    initial_url,
+                    ready_sender,
+                    worker_exit_reason,
+                )
+            })
             .context("start Servo engine thread")?;
         task::spawn_blocking(move || {
             let ready = ready_receiver
@@ -333,6 +362,7 @@ impl BrowserClient {
                 engine: EngineHandle {
                     sender,
                     worker: Some(worker),
+                    exit_reason,
                 },
                 fixed_viewport: options.viewport.is_some(),
                 terminal_cell_pixels: options.terminal_cell_pixels,
@@ -352,134 +382,126 @@ impl BrowserClient {
     }
 
     pub async fn navigate(&self, url: Url) -> Result<()> {
-        let sender = self.engine.sender.clone();
-        request_unit(sender, move |reply| EngineCommand::Navigate(url, reply)).await
+        self.engine
+            .request_unit(move |reply| EngineCommand::Navigate(url, reply))
+            .await
     }
 
     pub async fn new_tab(&self, url: Url) -> Result<usize> {
-        let sender = self.engine.sender.clone();
-        request(sender, move |reply| EngineCommand::NewTab(url, reply)).await
+        self.engine
+            .request(move |reply| EngineCommand::NewTab(url, reply))
+            .await
     }
 
     pub async fn close_tab(&self) -> Result<CloseTabOutcome> {
-        let sender = self.engine.sender.clone();
-        request(sender, EngineCommand::CloseTab).await
+        self.engine.request(EngineCommand::CloseTab).await
     }
 
     pub async fn next_tab(&self) -> Result<usize> {
-        let sender = self.engine.sender.clone();
-        request(sender, EngineCommand::NextTab).await
+        self.engine.request(EngineCommand::NextTab).await
     }
 
     pub async fn previous_tab(&self) -> Result<usize> {
-        let sender = self.engine.sender.clone();
-        request(sender, EngineCommand::PreviousTab).await
+        self.engine.request(EngineCommand::PreviousTab).await
     }
 
     pub async fn tab_info(&self) -> Result<TabInfo> {
-        let sender = self.engine.sender.clone();
-        request(sender, EngineCommand::TabInfo).await
+        self.engine.request(EngineCommand::TabInfo).await
     }
 
     pub async fn select_tab(&self, index: usize) -> Result<usize> {
-        let sender = self.engine.sender.clone();
-        request(sender, move |reply| EngineCommand::SelectTab(index, reply)).await
+        self.engine
+            .request(move |reply| EngineCommand::SelectTab(index, reply))
+            .await
     }
 
     pub async fn reload(&self) -> Result<()> {
-        let sender = self.engine.sender.clone();
-        request_unit(sender, EngineCommand::Reload).await
+        self.engine.request_unit(EngineCommand::Reload).await
     }
 
     pub async fn go_back(&self) -> Result<()> {
-        let sender = self.engine.sender.clone();
-        request_unit(sender, EngineCommand::Back).await
+        self.engine.request_unit(EngineCommand::Back).await
     }
 
     pub async fn go_forward(&self) -> Result<()> {
-        let sender = self.engine.sender.clone();
-        request_unit(sender, EngineCommand::Forward).await
+        self.engine.request_unit(EngineCommand::Forward).await
     }
 
     pub async fn screenshot(&self, _size: RenderSize) -> Result<DynamicImage> {
-        let sender = self.engine.sender.clone();
-        request(sender, EngineCommand::Screenshot).await
+        self.engine.request(EngineCommand::Screenshot).await
     }
 
     pub async fn manual_verification_required(&self) -> Result<bool> {
-        let sender = self.engine.sender.clone();
-        request(sender, EngineCommand::ManualVerificationRequired).await
+        self.engine
+            .request(EngineCommand::ManualVerificationRequired)
+            .await
     }
 
     pub async fn scroll_by(&self, delta_y: i64) -> Result<()> {
-        let sender = self.engine.sender.clone();
-        request_unit(sender, move |reply| EngineCommand::Scroll(delta_y, reply)).await
+        self.engine
+            .request_unit(move |reply| EngineCommand::Scroll(delta_y, reply))
+            .await
     }
 
     pub async fn type_text(&self, text: String) -> Result<()> {
-        let sender = self.engine.sender.clone();
-        request_unit(sender, move |reply| EngineCommand::TypeText(text, reply)).await
+        self.engine
+            .request_unit(move |reply| EngineCommand::TypeText(text, reply))
+            .await
     }
 
     pub async fn focus_first_editable(&self) -> Result<bool> {
-        let sender = self.engine.sender.clone();
-        request(sender, EngineCommand::FocusFirstEditable).await
+        self.engine.request(EngineCommand::FocusFirstEditable).await
     }
 
     pub async fn blur_active_element(&self) -> Result<()> {
-        let sender = self.engine.sender.clone();
-        request_unit(sender, EngineCommand::BlurActiveElement).await
+        self.engine
+            .request_unit(EngineCommand::BlurActiveElement)
+            .await
     }
 
     pub async fn press_key_with_fallback(&self, key: &'static str) -> Result<()> {
-        let sender = self.engine.sender.clone();
-        request_unit(sender, move |reply| {
-            EngineCommand::Key(key.to_owned(), reply)
-        })
-        .await
+        self.engine
+            .request_unit(move |reply| EngineCommand::Key(key.to_owned(), reply))
+            .await
     }
 
     pub async fn click_js(&self, column: u16, row: u16, size: RenderSize) -> Result<ClickOutcome> {
-        let sender = self.engine.sender.clone();
-        request(sender, move |reply| EngineCommand::Click {
-            column,
-            row,
-            size,
-            reply,
-        })
-        .await
+        self.engine
+            .request(move |reply| EngineCommand::Click {
+                column,
+                row,
+                size,
+                reply,
+            })
+            .await
     }
 
     /// Forward a pointer move to Servo and return the interactive target under
     /// the terminal cell. The caller rate-limits this because terminal mouse
     /// motion can be considerably noisier than click events.
     pub async fn hover(&self, column: u16, row: u16, size: RenderSize) -> Result<HoverOutcome> {
-        let sender = self.engine.sender.clone();
-        request(sender, move |reply| EngineCommand::Hover {
-            column,
-            row,
-            size,
-            reply,
-        })
-        .await
+        self.engine
+            .request(move |reply| EngineCommand::Hover {
+                column,
+                row,
+                size,
+                reply,
+            })
+            .await
     }
 
     pub async fn current_url(&self) -> Result<String> {
-        let sender = self.engine.sender.clone();
-        request(sender, EngineCommand::CurrentUrl).await
+        self.engine.request(EngineCommand::CurrentUrl).await
     }
 
     pub async fn show_link_hints(&self) -> Result<usize> {
-        let sender = self.engine.sender.clone();
-        request(sender, EngineCommand::ShowLinkHints).await
+        self.engine.request(EngineCommand::ShowLinkHints).await
     }
 
     pub async fn activate_link_hint(&self, hint: usize) -> Result<LinkHintOutcome> {
-        let sender = self.engine.sender.clone();
-        request(sender, move |reply| {
-            EngineCommand::ActivateLinkHint(hint, reply)
-        })
-        .await
+        self.engine
+            .request(move |reply| EngineCommand::ActivateLinkHint(hint, reply))
+            .await
     }
 
     /// Resize Servo's WebView contexts when the terminal gets larger or smaller.
@@ -490,12 +512,17 @@ impl BrowserClient {
             return Ok(());
         }
         let viewport = browser_viewport(size, None, self.terminal_cell_pixels);
-        let sender = self.engine.sender.clone();
-        request_unit(sender, move |reply| EngineCommand::Resize(viewport, reply)).await
+        self.engine
+            .request_unit(move |reply| EngineCommand::Resize(viewport, reply))
+            .await
     }
 }
 
-async fn request<T, F>(sender: Sender<EngineCommand>, command: F) -> Result<T>
+async fn request<T, F>(
+    sender: Sender<EngineCommand>,
+    exit_reason: EngineExitReason,
+    command: F,
+) -> Result<T>
 where
     T: Send + 'static,
     F: FnOnce(Sender<Result<T>>) -> EngineCommand + Send + 'static,
@@ -504,19 +531,25 @@ where
         let (reply_sender, reply_receiver) = mpsc::channel();
         sender
             .send(command(reply_sender))
-            .context("send Servo command")?;
+            .map_err(|error| engine_command_error("send Servo command", &exit_reason, error))?;
         reply_receiver
             .recv_timeout(ENGINE_COMMAND_TIMEOUT)
-            .context("wait for Servo command")?
+            .map_err(|error| engine_command_error("wait for Servo command", &exit_reason, error))?
     })
     .await?
 }
 
-async fn request_unit<F>(sender: Sender<EngineCommand>, command: F) -> Result<()>
-where
-    F: FnOnce(Sender<Result<()>>) -> EngineCommand + Send + 'static,
-{
-    request(sender, command).await
+fn engine_command_error(
+    operation: &str,
+    exit_reason: &EngineExitReason,
+    source: impl std::fmt::Display,
+) -> anyhow::Error {
+    let reason = exit_reason
+        .lock()
+        .ok()
+        .and_then(|reason| reason.clone())
+        .unwrap_or_else(|| String::from("Servo engine ended without a reported reason"));
+    anyhow::anyhow!("{operation}: {source}; {reason}")
 }
 
 fn run_engine(
@@ -525,6 +558,7 @@ fn run_engine(
     debug: bool,
     initial_url: Url,
     ready_sender: mpsc::SyncSender<Result<()>>,
+    exit_reason: EngineExitReason,
 ) {
     let result = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
@@ -551,22 +585,34 @@ fn run_engine(
         Ok(())
     }));
     match result {
-        Ok(Ok(())) => {}
+        Ok(Ok(())) => {
+            record_engine_exit(&exit_reason, "Servo engine loop exited".to_owned());
+        }
         Ok(Err(error)) => {
+            let reason = format!("Servo engine stopped: {error:#}");
+            record_engine_exit(&exit_reason, reason.clone());
             if debug {
-                eprintln!("fpasobrowser debug: Servo engine stopped: {error:#}");
+                eprintln!("fpasobrowser debug: {reason}");
             }
             let _ = ready_sender.send(Err(error));
         }
         Err(payload) => {
             let message = panic_message(payload);
+            let reason = format!("Servo engine panicked: {message}");
+            record_engine_exit(&exit_reason, reason.clone());
             if debug {
-                eprintln!("fpasobrowser debug: Servo engine panicked: {message}");
+                eprintln!("fpasobrowser debug: {reason}");
             }
             let _ = ready_sender.send(Err(anyhow::anyhow!(
                 "Servo engine panicked during startup: {message}"
             )));
         }
+    }
+}
+
+fn record_engine_exit(exit_reason: &EngineExitReason, reason: String) {
+    if let Ok(mut recorded) = exit_reason.lock() {
+        *recorded = Some(reason);
     }
 }
 
