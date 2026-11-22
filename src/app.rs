@@ -274,7 +274,7 @@ fn wait_for_run_error(
         SelectedBackend::from_choice_with_sixel_cell_pixels(backend_choice, sixel_cell_pixels);
     let size = terminal.size()?;
     let message = format!("browser error: {error:#}; press r to retry or q to quit");
-    draw_disconnected(&mut terminal, size, &message)?;
+    draw_disconnected(&mut terminal, &renderer, size, &message)?;
     loop {
         match input::read_command(Duration::from_millis(100), InputMode::Normal)? {
             Command::Reload => {
@@ -462,21 +462,21 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                     Ok(Err(error)) => {
                         browser_connected = false;
                         message = format!(
-                            "browser disconnected: {error:#}; press r to relaunch, q to quit"
+                            "browser disconnected: {error:#}; press r to retry, q to quit and restart if stopped"
                         );
-                        draw_disconnected(&mut terminal, size, &message)?;
+                        draw_disconnected(&mut terminal, &renderer, size, &message)?;
                     }
                     Err(_) => {
                         browser_connected = false;
                         message = String::from(
-                            "browser redraw timed out; press r to relaunch, q to quit",
+                            "browser redraw timed out; press r to retry, q to quit and restart if stopped",
                         );
-                        draw_disconnected(&mut terminal, size, &message)?;
+                        draw_disconnected(&mut terminal, &renderer, size, &message)?;
                     }
                 }
             } else {
                 presentation = None;
-                draw_disconnected(&mut terminal, size, &message)?;
+                draw_disconnected(&mut terminal, &renderer, size, &message)?;
             }
             // A resumed engine must immediately render the fresh page. The
             // normal redraw path clears this flag, but a recovery requests
@@ -514,9 +514,9 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                 browser_connected = false;
                 input_mode = InputMode::Normal;
                 message = format!(
-                    "terminal input temporarily unavailable: {error}; press r to relaunch, q to quit"
+                    "terminal input temporarily unavailable: {error}; press r to retry, q to quit"
                 );
-                draw_disconnected(&mut terminal, size, &message)?;
+                draw_disconnected(&mut terminal, &renderer, size, &message)?;
                 continue;
             }
         };
@@ -542,24 +542,26 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                     {
                         Ok(_) => {
                             browser_connected = true;
-                            message = String::from("embedded browser relaunched");
+                            message = String::from("embedded browser recovered");
                             needs_redraw = true;
                         }
                         Err(error) => {
                             message =
-                                format!("relaunch failed: {error}; press r to retry, q to quit");
-                            draw_disconnected(&mut terminal, size, &message)?;
+                                format!("recovery retry failed: {error}; press q and start fpasobrowser again if it stopped");
+                            draw_disconnected(&mut terminal, &renderer, size, &message)?;
                         }
                     }
                 }
                 Command::Help => {
                     show_help = !show_help;
                     message = if show_help {
-                        String::from("browser disconnected; r relaunch | q quit | ? hide help")
+                        String::from(
+                            "browser disconnected; r retries current engine | q quit | ? hide help",
+                        )
                     } else {
-                        String::from("browser disconnected; press r to relaunch, q to quit")
+                        String::from("browser disconnected; press r to retry, q to quit")
                     };
-                    draw_disconnected(&mut terminal, size, &message)?;
+                    draw_disconnected(&mut terminal, &renderer, size, &message)?;
                 }
                 Command::OpenExternal | Command::OpenVerification => {
                     match open_in_regular_browser(state.url.as_str()) {
@@ -572,7 +574,7 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                             message = format!("open regular browser failed: {error}");
                         }
                     }
-                    draw_disconnected(&mut terminal, size, &message)?;
+                    draw_disconnected(&mut terminal, &renderer, size, &message)?;
                 }
                 Command::Click { column, row }
                     if terminal.has_toolbar() && row == toolbar_row(size) =>
@@ -589,21 +591,21 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                             {
                                 Ok(()) => {
                                     browser_connected = true;
-                                    message = String::from("embedded browser relaunched");
+                                    message = String::from("embedded browser recovered");
                                     needs_redraw = true;
                                 }
                                 Err(error) => {
                                     message = format!(
-                                        "relaunch failed: {error}; press r to retry, q to quit"
+                                        "recovery retry failed: {error}; press q and start fpasobrowser again if it stopped"
                                     );
-                                    draw_disconnected(&mut terminal, size, &message)?;
+                                    draw_disconnected(&mut terminal, &renderer, size, &message)?;
                                 }
                             }
                         }
                         Some(Command::Help) => {
                             show_help = !show_help;
-                            message = String::from("browser disconnected; press r to relaunch");
-                            draw_disconnected(&mut terminal, size, &message)?;
+                            message = String::from("browser disconnected; press r to retry");
+                            draw_disconnected(&mut terminal, &renderer, size, &message)?;
                         }
                         Some(Command::OpenVerification) => {
                             match open_in_regular_browser(state.url.as_str()) {
@@ -616,18 +618,18 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                                     message = format!("open regular browser failed: {error}");
                                 }
                             }
-                            draw_disconnected(&mut terminal, size, &message)?;
+                            draw_disconnected(&mut terminal, &renderer, size, &message)?;
                         }
                         _ => {
-                            message = String::from("browser disconnected; press r to relaunch");
-                            draw_disconnected(&mut terminal, size, &message)?;
+                            message = String::from("browser disconnected; press r to retry");
+                            draw_disconnected(&mut terminal, &renderer, size, &message)?;
                         }
                     }
                 }
                 Command::None => {}
                 _ => {
-                    message = String::from("browser disconnected; press r to relaunch, q to quit");
-                    draw_disconnected(&mut terminal, size, &message)?;
+                    message = String::from("browser disconnected; press r to retry, q to quit");
+                    draw_disconnected(&mut terminal, &renderer, size, &message)?;
                 }
             }
             continue;
@@ -659,7 +661,7 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                         .await
                         .is_ok();
                         if resumed {
-                            message = String::from("embedded browser relaunched; page refreshed");
+                            message = String::from("embedded browser recovered; page refreshed");
                             schedule_redraw_burst(
                                 &mut pending_redraw_at,
                                 &mut redraw_burst_remaining,
@@ -1528,6 +1530,17 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                                     message = format!(
                                         "clicked select field {column},{row}; Up/Down choose, Tab moves focus, Esc normal{focus_detail}{popup_detail}"
                                     );
+                                } else if outcome.suggestion {
+                                    // ARIA search options normally leave the
+                                    // query editor focused. Preserve input
+                                    // mode so a suggestion that fills the
+                                    // query can be submitted with Enter; a
+                                    // suggestion that navigates will simply
+                                    // be replaced by the scheduled redraw.
+                                    input_mode = InputMode::BrowserInput;
+                                    message = format!(
+                                        "activated search suggestion {column},{row}; waiting for page or Enter to submit, Esc normal{focus_detail}{popup_detail}"
+                                    );
                                 } else if outcome.iframe {
                                     // Servo can keep keyboard focus in the
                                     // child browsing context while the parent
@@ -1746,24 +1759,29 @@ fn loading_redraw_delay(frame_transport_is_expensive: bool) -> Duration {
 
 fn draw_disconnected(
     terminal: &mut Terminal,
+    renderer: &SelectedBackend,
     size: crate::render::RenderSize,
     message: &str,
 ) -> Result<()> {
+    // `clear` erases text cells only. Explicitly retire a Kitty/SIXEL image
+    // too, otherwise the last live page remains visible behind the recovery
+    // screen and makes it look as if r had reconnected it.
+    renderer.cleanup(terminal.writer())?;
     terminal.clear()?;
     queue!(
         terminal.writer(),
         MoveTo(0, 0),
         Print("fpasobrowser: browser disconnected"),
         MoveTo(0, 2),
-        Print("Press r to relaunch the current URL."),
+        Print("Press r to retry the current embedded browser."),
         MoveTo(0, 3),
         Print("Press v/o to open the current URL in your regular browser."),
         MoveTo(0, 4),
         Print("Press q to quit."),
         MoveTo(0, 5),
-        Print("Press ? for help; press r to relaunch the browser."),
+        Print("If it was stopped, press q and start fpasobrowser again."),
         MoveTo(0, 6),
-        Print("Page input, scrolling, and Tab focus resume after the engine reconnects."),
+        Print("Page input, scrolling, and Tab focus resume after recovery."),
     )?;
     terminal.status(size.rows, message)?;
     if terminal.has_tab_strip() {
@@ -1798,29 +1816,17 @@ async fn relaunch_browser_with_timeout(
 
 async fn relaunch_browser(
     browser: &mut BrowserClient,
-    browser_options: &BrowserOptions,
-    size: crate::render::RenderSize,
-    state: &PageState,
+    _browser_options: &BrowserOptions,
+    _size: crate::render::RenderSize,
+    _state: &PageState,
 ) -> Result<()> {
-    let mut last_error = None;
-    for attempt in 0..10 {
-        match BrowserClient::launch(size, browser_options.clone(), state.url.clone()).await {
-            Ok(relaunched_browser) => {
-                *browser = relaunched_browser;
-                return Ok(());
-            }
-            Err(error) => {
-                last_error = Some(error);
-                if attempt < 9 {
-                    // An embedded engine can still fail transiently during
-                    // initialization; retry before returning to the
-                    // disconnected screen.
-                    sleep(Duration::from_millis(500)).await;
-                }
-            }
-        }
-    }
-    Err(last_error.expect("relaunch attempts must produce an error"))
+    // Servo 0.8 initializes process-global options in `Servo::new`. A second
+    // `ServoBuilder::build()` after any successful launch therefore panics
+    // with `Already initialized: Opts {{ ... }}`. Recovery must first reuse
+    // the existing owner thread: if that engine is merely busy, reload gives
+    // it a fresh frame; if it has stopped, its precise error is returned and
+    // the user can restart this process cleanly.
+    browser.reload().await
 }
 
 async fn capture_only(url: Url, options: AppOptions) -> Result<()> {

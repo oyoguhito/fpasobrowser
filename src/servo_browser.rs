@@ -149,6 +149,9 @@ pub struct ClickOutcome {
     /// keyboard mode without pretending that typed characters are valid.
     pub select: bool,
     pub iframe: bool,
+    /// An ARIA option (such as a search suggestion) keeps the associated
+    /// editor focused while its own pointer activation completes.
+    pub suggestion: bool,
     pub cdp_fallback: bool,
     pub target_tag: Option<String>,
     pub active_tag: Option<String>,
@@ -939,17 +942,36 @@ fn engine_loop(
                         point.into(),
                     )));
                     pump(servo, webview, 3);
-                    let mut focused = inspect_active_element(servo, webview).unwrap_or_default();
+                    let navigation_in_flight = webview.load_status() != LoadStatus::Complete;
+                    // Google search suggestions are ARIA options owned by the
+                    // still-focused search editor. Inspecting or blurring the
+                    // document immediately after their pointer activation can
+                    // close the list before the page handles the click.
+                    // Likewise, querying an old document while an ordinary
+                    // click has started navigation can consume the full
+                    // script-callback timeout. The native input event has
+                    // already been delivered in both cases; leave it alone.
+                    let mut focused = if before.suggestion || navigation_in_flight {
+                        InspectedTarget::default()
+                    } else {
+                        inspect_active_element(servo, webview).unwrap_or_default()
+                    };
                     // Retain a small same-origin fallback for embedded
                     // inputs. A parent document reports its iframe as active,
                     // while the editable child can otherwise be missed during
                     // the short paint/event pump above. This never probes a
                     // cross-origin child frame.
-                    if (before.editable || before.iframe) && !focused.editable {
+                    if !before.suggestion
+                        && !navigation_in_flight
+                        && (before.editable || before.iframe)
+                        && !focused.editable
+                    {
                         let _ = focus_editable_at_point(servo, webview, point);
                         focused = inspect_active_element(servo, webview).unwrap_or_default();
                     }
-                    if before.tag.as_deref() == Some("select")
+                    if !before.suggestion
+                        && !navigation_in_flight
+                        && before.tag.as_deref() == Some("select")
                         && focused.tag.as_deref() != Some("select")
                     {
                         // A software WebView has no OS select popup to own
@@ -958,12 +980,14 @@ fn engine_loop(
                         let _ = focus_select_at_point(servo, webview, point);
                         focused = inspect_active_element(servo, webview).unwrap_or_default();
                     }
-                    if focused.editable
-                        || focused.iframe
-                        || focused.tag.as_deref() == Some("select")
+                    if !before.suggestion
+                        && !navigation_in_flight
+                        && (focused.editable
+                            || focused.iframe
+                            || focused.tag.as_deref() == Some("select"))
                     {
                         let _ = refresh_focus_indicator(servo, webview);
-                    } else {
+                    } else if !before.suggestion && !navigation_in_flight {
                         // Mouse-clicked links and buttons may receive native
                         // DOM focus. Only editable page controls retain focus
                         // in fpasobrowser; otherwise an old cyan outline can
@@ -983,6 +1007,7 @@ fn engine_loop(
                     select: before.tag.as_deref() == Some("select")
                         || focused.tag.as_deref() == Some("select"),
                     iframe: before.iframe || focused.iframe,
+                    suggestion: before.suggestion,
                     cdp_fallback: false,
                     target_tag: before.tag,
                     active_tag: focused.tag,
@@ -1034,10 +1059,12 @@ fn engine_loop(
                     );
                 }
                 // A form submission can replace the document synchronously.
-                // Do not evaluate the focus-overlay script against a document
-                // that Servo is tearing down; that can terminate the embedded
-                // engine and leave the terminal on its disconnected screen.
-                if !navigation_in_flight {
+                // Do not evaluate the focus-overlay script after Enter: even
+                // when `load_status` has not flipped during these two pumps,
+                // Google may be between its key handler and its navigation.
+                // Waiting for that old document's script callback was the
+                // actual 9.6-second Enter timeout on Windows.
+                if key != "Enter" && !navigation_in_flight {
                     let _ = refresh_focus_indicator(servo, webview);
                 }
                 let _ = reply.send(Ok(()));
@@ -1099,6 +1126,7 @@ fn engine_loop(
 struct InspectedTarget {
     editable: bool,
     iframe: bool,
+    suggestion: bool,
     tag: Option<String>,
 }
 
@@ -1220,7 +1248,13 @@ fn inspect_click_target(
               }}
             }}
             const editable = element.isContentEditable || tag === 'textarea' || (tag === 'input' && element.type !== 'hidden' && !element.disabled);
-            return [editable ? '1' : '0', (nested || tag === 'iframe') ? '1' : '0', tag].join('|');
+            let option = element;
+            while (option && option !== doc.documentElement) {{
+              if ((option.getAttribute && option.getAttribute('role') || '').toLowerCase() === 'option') break;
+              option = option.parentElement;
+            }}
+            const suggestion = !!option;
+            return [editable ? '1' : '0', (nested || tag === 'iframe') ? '1' : '0', suggestion ? '1' : '0', tag].join('|');
           }};
           return inspect(document, {:.3} / scale, {:.3} / scale, false);
         }})()"#,
@@ -1229,9 +1263,10 @@ fn inspect_click_target(
     let JSValue::String(value) = evaluate_javascript(servo, webview, &script)? else {
         return Ok(InspectedTarget::default());
     };
-    let mut fields = value.splitn(3, '|');
+    let mut fields = value.splitn(4, '|');
     let editable = fields.next() == Some("1");
     let iframe = fields.next() == Some("1");
+    let suggestion = fields.next() == Some("1");
     let tag = fields
         .next()
         .filter(|tag| !tag.is_empty())
@@ -1239,6 +1274,7 @@ fn inspect_click_target(
     Ok(InspectedTarget {
         editable,
         iframe,
+        suggestion,
         tag,
     })
 }
@@ -1360,6 +1396,7 @@ fn inspect_active_element(servo: &Servo, webview: &WebView) -> Result<InspectedT
     Ok(InspectedTarget {
         editable,
         iframe,
+        suggestion: false,
         tag,
     })
 }
