@@ -69,6 +69,12 @@ Linux版installerは`apt`、`dnf`、`pacman`に対応します。Windows版は`w
 Rust stable、Python 3、LLVMを必要時だけ導入します。macOSでXcode Command Line Toolsの
 導入が求められたときは完了後に同じcommandを再実行してください。
 
+checked-inの`.cargo/config.toml`は、Servoのparallel Stylo CSS workerへServo本体のbuildと同じ
+8 MiB stackをcompile時に設定します。これによりdebug source buildで複雑なpageを表示した際の
+`StyleThread#N has overflowed its stack`を防ぎます。launcherはこの設定fileもbuild inputとして
+確認するため、更新をpullした後に一度`./bin/fpasobrowser --rebuild`または
+`.\fpasobrowser.cmd --rebuild`を実行してStyloを再compileしてください。
+
 ## Windows の確認手順
 
 source buildの前に、launcherの診断を実行できます。

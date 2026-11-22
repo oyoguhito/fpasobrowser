@@ -175,6 +175,13 @@ cargo build --locked
 error if `LIBCLANG_PATH` is not set. Prefer the launcher for a source checkout;
 use direct Cargo only after setting the two environment variables above.
 
+The checked-in `.cargo/config.toml` also gives Servo's parallel Stylo CSS
+workers an 8 MiB stack, matching Servo's own build configuration. This avoids
+`StyleThread#N has overflowed its stack` on complex pages in a debug source
+build. The launcher treats that configuration as a build input: after pulling
+an update, run `./bin/fpasobrowser --rebuild` or
+`.\fpasobrowser.cmd --rebuild` once to rebuild Stylo with the new setting.
+
 The omitted backend automatically selects high-resolution `kitty` when the
 terminal advertises it (including fpasoterm), and otherwise selects portable
 `half-block`. On Windows, fpasoterm advertises its required `osc-v1` image
