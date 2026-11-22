@@ -943,15 +943,20 @@ fn engine_loop(
                     )));
                     pump(servo, webview, 3);
                     let navigation_in_flight = webview.load_status() != LoadStatus::Complete;
-                    // Google search suggestions are ARIA options owned by the
-                    // still-focused search editor. Inspecting or blurring the
-                    // document immediately after their pointer activation can
-                    // close the list before the page handles the click.
-                    // Likewise, querying an old document while an ordinary
-                    // click has started navigation can consume the full
-                    // script-callback timeout. The native input event has
-                    // already been delivered in both cases; leave it alone.
-                    let mut focused = if before.suggestion || navigation_in_flight {
+                    // Only controls that need keyboard ownership require a
+                    // post-click DOM query. A link or button has already
+                    // received its native down/up pair; querying and then
+                    // blurring the old document can race its asynchronous
+                    // navigation, hold this serialized engine command for
+                    // the full script callback timeout, and make the queued
+                    // redraw look like a browser disconnect.
+                    //
+                    // Google search suggestions are ARIA options owned by
+                    // the still-focused search editor, so they intentionally
+                    // take the same no-post-click-query path.
+                    let needs_keyboard_focus =
+                        before.editable || before.iframe || before.tag.as_deref() == Some("select");
+                    let mut focused = if !needs_keyboard_focus || navigation_in_flight {
                         InspectedTarget::default()
                     } else {
                         inspect_active_element(servo, webview).unwrap_or_default()
@@ -961,7 +966,7 @@ fn engine_loop(
                     // while the editable child can otherwise be missed during
                     // the short paint/event pump above. This never probes a
                     // cross-origin child frame.
-                    if !before.suggestion
+                    if needs_keyboard_focus
                         && !navigation_in_flight
                         && (before.editable || before.iframe)
                         && !focused.editable
@@ -969,7 +974,7 @@ fn engine_loop(
                         let _ = focus_editable_at_point(servo, webview, point);
                         focused = inspect_active_element(servo, webview).unwrap_or_default();
                     }
-                    if !before.suggestion
+                    if needs_keyboard_focus
                         && !navigation_in_flight
                         && before.tag.as_deref() == Some("select")
                         && focused.tag.as_deref() != Some("select")
@@ -980,19 +985,13 @@ fn engine_loop(
                         let _ = focus_select_at_point(servo, webview, point);
                         focused = inspect_active_element(servo, webview).unwrap_or_default();
                     }
-                    if !before.suggestion
+                    if needs_keyboard_focus
                         && !navigation_in_flight
                         && (focused.editable
                             || focused.iframe
                             || focused.tag.as_deref() == Some("select"))
                     {
                         let _ = refresh_focus_indicator(servo, webview);
-                    } else if !before.suggestion && !navigation_in_flight {
-                        // Mouse-clicked links and buttons may receive native
-                        // DOM focus. Only editable page controls retain focus
-                        // in fpasobrowser; otherwise an old cyan outline can
-                        // survive a tab switch or page scroll.
-                        let _ = blur_active_element(servo, webview);
                     }
                     (before, focused)
                 };
