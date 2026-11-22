@@ -15,23 +15,29 @@ directory instead.
 ## Mozilla Public License 2.0 components
 
 fpasobrowser embeds Servo and Mozilla-derived components that are licensed
-under MPL-2.0, including Servo 0.7.0, mozjs 0.26.4 / mozjs_sys 153.3.0-1,
-WebRender 0.70.0, Stylo 0.22.0, cssparser, and selectors. The license text for
+under MPL-2.0, including Servo 0.8.0, mozjs 0.26.13 / mozjs_sys 153.6.0-1,
+WebRender 0.70.1, Stylo 0.23.0, cssparser, and selectors. The license text for
 components used in each platform's release build is included in that archive's
 `THIRD_PARTY_LICENSES/` directory.
 
 The corresponding Source Code Form is available without charge from the
 versioned crates named in `Cargo.lock`; for example:
 
-- <https://crates.io/crates/servo/0.7.0>
-- <https://crates.io/crates/mozjs/0.26.4>
-- <https://crates.io/crates/mozjs_sys/153.3.0-1>
-- <https://crates.io/crates/webrender/0.70.0>
-- <https://crates.io/crates/stylo/0.22.0>
+- <https://crates.io/crates/servo/0.8.0>
+- <https://crates.io/crates/mozjs/0.26.13>
+- <https://crates.io/crates/mozjs_sys/153.6.0-1>
+- <https://crates.io/crates/webrender/0.70.1>
+- <https://crates.io/crates/stylo/0.23.0>
 
 To reproduce the complete resolved source tree from a source checkout, use
 `cargo vendor --locked third_party_source`.  fpasobrowser-specific source is
 available in the matching GitHub Release source archive and repository tag.
+
+fpasobrowser does not carry a patch or vendored copy of Servo source. If a
+future release modifies an MPL-covered source file, that release must make the
+modified Source Code Form available under MPL-2.0 as well as retaining this
+notice and the upstream license text. This is in addition to the normal source
+and notice material already shipped for every release.
 
 ## Other bundled components
 
@@ -41,6 +47,15 @@ components.  Notable native components include FreeType and libpng through
 notice files are retained by the generated `THIRD_PARTY_LICENSES/` directory.
 Do not remove that directory, this notice, `LICENSE`, or `Cargo.lock` when
 redistributing a binary archive.
+
+## Release redistribution checklist
+
+Every official binary archive contains `LICENSE`, `Cargo.lock`, this file, and
+the generated `THIRD_PARTY_LICENSES/` directory. The archive creation script
+checks those entries before publishing the archive. The matching source archive
+is published with the release, and the version-specific MPL component sources
+remain available through the links above. Keep all of those materials together
+when redistributing the binary.
 
 `Cargo.lock` is authoritative for the exact version set in a release. Run the
 collection script again for each release platform after changing it; do not

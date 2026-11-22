@@ -29,8 +29,8 @@ flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 open = { version = "5", optional = true }
 rustls = { version = "0.23", default-features = false, optional = true }
-servo = { version = "0.7", optional = true }
-embedder_traits = { package = "servo-embedder-traits", version = "0.7", optional = true }
+servo = { version = "0.8", optional = true }
+embedder_traits = { package = "servo-embedder-traits", version = "0.8", optional = true }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"], optional = true }
 url = { version = "2", optional = true }
 
@@ -38,7 +38,7 @@ url = { version = "2", optional = true }
 # Prefer Servo's ANGLE/Direct3D path over WGL on Windows. This gives the
 # software context a WARP fallback, which is essential in RDP sessions where
 # the legacy OpenGL path is often unavailable.
-servo = { version = "0.7", optional = true, features = ["no-wgl"] }
+servo = { version = "0.8", optional = true, features = ["no-wgl"] }
 
 [[bin]]
 name = "fpasobrowser"

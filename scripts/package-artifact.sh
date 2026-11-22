@@ -61,4 +61,15 @@ cp LICENSE THIRD_PARTY_NOTICES.md Cargo.lock "$staging_dir/"
 cp -R target/release/THIRD_PARTY_LICENSES "$staging_dir/"
 tar -C "$staging_dir" -czf "$archive" \
   "${package_files[@]}" LICENSE THIRD_PARTY_NOTICES.md Cargo.lock THIRD_PARTY_LICENSES
+
+# The accompanying notices are part of the distributable artifact, not merely
+# repository documentation. Verify their presence after creating the archive so
+# a packaging change cannot silently omit the MPL source notice or a collected
+# third-party license file.
+for required_entry in LICENSE THIRD_PARTY_NOTICES.md Cargo.lock THIRD_PARTY_LICENSES/README.md; do
+  if ! tar -tzf "$archive" "$required_entry" >/dev/null; then
+    echo "required redistribution material is missing from $archive: $required_entry" >&2
+    exit 1
+  fi
+done
 printf 'created %s\n' "$archive"
