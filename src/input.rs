@@ -214,6 +214,18 @@ mod tests {
     }
 
     #[test]
+    fn browser_input_mode_forwards_select_navigation_keys() {
+        assert_eq!(
+            key_command(key(KeyCode::Up), InputMode::BrowserInput).expect("read key"),
+            Command::BrowserKey("ArrowUp")
+        );
+        assert_eq!(
+            key_command(key(KeyCode::Down), InputMode::BrowserInput).expect("read key"),
+            Command::BrowserKey("ArrowDown")
+        );
+    }
+
+    #[test]
     fn normal_mode_keeps_tab_navigation_available() {
         assert_eq!(
             key_command(key(KeyCode::BackTab), InputMode::Normal).expect("read key"),

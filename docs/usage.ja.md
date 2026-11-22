@@ -271,6 +271,7 @@ terminal UIでは `?` のhelp panelにもversion/build情報を表示します�
 | `i` | browser input modeへ入る |
 | input mode中の `Esc` | page fieldのfocusを外してnormal modeへ戻る |
 | input mode中の `Tab`, `Shift+Tab`, `Enter` | page内focus移動 / 選択 |
+| focusされたselect中の `Up`, `Down` | 前 / 次の有効なoptionを選択 |
 | `t`, `x`, `{`, `}`、`Ctrl+Tab`、`Ctrl+Shift+Tab` | 新規tab、active tabを閉じる、前のtab、次のtab |
 | `f` | 番号付きlink/action hintを表示し、番号を入力して実行 |
 | left click | WebViewへpointer clickを送る |
@@ -278,12 +279,12 @@ terminal UIでは `?` のhelp panelにもversion/build情報を表示します�
 | mouse wheel | WebViewへscrollを送る |
 
 normal modeでは `q`、`r`、`g`、`f` などをfpasobrowserが使い、文字キーをpageへ送信しません。Web formへ
-文字を入力する前に `i` を押すと、最初に見えているeditable controlへfocusを移します。same-origin iframe内の
+文字を入力する前に `i` を押すと、最初に見えているeditable controlまたはnative selectへfocusを移します。same-origin iframe内の
 editable controlも対象です。page自身に見やすいfocus ringがある場合はその1つだけを使い、ない場合だけ
 fpasobrowserが水色の補助枠を表示します。cross-origin iframe（CAPTCHA providerを
 含む）はfpasobrowserのpage scriptで検査せず、Servo nativeのframe input処理に委ねます。focus中の要素は
-水色の枠で確認でき、input mode中の `Tab` / `Shift+Tab` で移動します。editable controlをclickした場合も
-input modeへ入ります。click後にServoが親側でiframeだけを報告した場合も、child controlへの文字入力とfocus
+水色の枠で確認でき、input mode中の `Tab` / `Shift+Tab` で移動します。editable controlまたはselectをclickした場合も
+input modeへ入ります。offscreenのnative selectは `Up` / `Down` でoptionを選択し、通常のpage `input` / `change` eventを送ります。click後にServoが親側でiframeだけを報告した場合も、child controlへの文字入力とfocus
 移動を維持するためinput modeを続けます。`Esc`でnormal modeへ戻ります。Servo tabは個別のWebViewとsoftware rendering contextを持ちます。popup tabも
 独立したcontextを使うため、別tabの画像が表示されません。
 最後のtabを `x` で閉じようとした場合は、terminal UIを消さないためtabを維持します。

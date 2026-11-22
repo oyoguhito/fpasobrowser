@@ -379,7 +379,8 @@ Controls:
   application instead of a browser.
 - `i`: browser input mode; typed characters, arrows, Enter, Tab, and Backspace
   are sent to the current page. It searches the visible same-origin document
-  tree, including embedded iframes, for the first editable target. A page's
+  tree, including embedded iframes, for the first editable target or native
+  select. A page's
   own focus ring is used when it provides one; otherwise fpasobrowser adds a
   cyan frame. `Esc` removes focus and returns to normal mode.
 - `g`: prompt for a new URL and navigate the current Servo WebView
@@ -392,8 +393,9 @@ Controls:
   promoted to a new, selected terminal tab. The activity line confirms this;
   use `{` / `}` to return and `x` to close it.
 - `f`: add numbered link/action hints, then enter a hint number to activate it
-- Mouse left click: forwarded to the embedded WebView. Editable targets enter
-  input mode automatically; when Servo exposes only an iframe as the focused
+- Mouse left click: forwarded to the embedded WebView. Editable targets and
+  native selects enter input mode automatically; use `Up` / `Down` to change
+  a focused select value. When Servo exposes only an iframe as the focused
   parent-side target, input mode is retained so the child control keeps
   receiving text, Tab, and Shift+Tab. Press `Esc` to return to normal mode.
   `i` focuses the first visible editable target. A non-editable click outside

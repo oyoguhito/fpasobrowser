@@ -126,6 +126,10 @@ pub struct PageState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClickOutcome {
     pub editable: bool,
+    /// A native `<select>` is keyboard-operable but does not accept text.
+    /// Keep it separate from `editable` so the terminal can enter its
+    /// keyboard mode without pretending that typed characters are valid.
+    pub select: bool,
     pub iframe: bool,
     pub cdp_fallback: bool,
     pub target_tag: Option<String>,
@@ -851,34 +855,30 @@ fn engine_loop(
                     let before = inspect_click_target(servo, webview, point).unwrap_or_default();
                     // For an editable control that the DOM can identify
                     // precisely, focus it before sending a native pointer
-                    // sequence. Servo's offscreen mouse path may otherwise
-                    // process a delayed popup request first, even though the
-                    // visible target is an input. Direct focus is sufficient
-                    // for terminal typing; non-editable controls retain their
-                    // normal mouse down/up behaviour.
-                    let focused_directly = before.editable
+                    // sequence. The DOM focus call gives the offscreen path a
+                    // precise target, but it must be followed by the native
+                    // down/up pair as well: Servo's keyboard dispatcher keeps
+                    // its own focused-area state for default text editing,
+                    // select controls, and form submission. Previously the
+                    // direct-focus success path skipped those native events,
+                    // leaving a visible focused input that could not receive
+                    // its editing/default key actions on Windows.
+                    let _focused_directly = before.editable
                         && focus_editable_at_point(servo, webview, point).unwrap_or(false);
-                    if !focused_directly {
-                        webview.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(
-                            point.into(),
-                        )));
-                        webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
-                            MouseButtonAction::Down,
-                            MouseButton::Primary,
-                            point.into(),
-                        )));
-                        webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
-                            MouseButtonAction::Up,
-                            MouseButton::Primary,
-                            point.into(),
-                        )));
-                        pump(servo, webview, 3);
-                    } else {
-                        // `evaluate_javascript` already pumps the event loop.
-                        // Unlike link activation, focus does not unload the
-                        // document, so it has a bounded completion callback.
-                        pump(servo, webview, 2);
-                    }
+                    webview.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(
+                        point.into(),
+                    )));
+                    webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
+                        MouseButtonAction::Down,
+                        MouseButton::Primary,
+                        point.into(),
+                    )));
+                    webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
+                        MouseButtonAction::Up,
+                        MouseButton::Primary,
+                        point.into(),
+                    )));
+                    pump(servo, webview, 3);
                     let mut focused = inspect_active_element(servo, webview).unwrap_or_default();
                     // Retain a small same-origin fallback for embedded
                     // inputs. A parent document reports its iframe as active,
@@ -889,7 +889,19 @@ fn engine_loop(
                         let _ = focus_editable_at_point(servo, webview, point);
                         focused = inspect_active_element(servo, webview).unwrap_or_default();
                     }
-                    if focused.editable || focused.iframe {
+                    if before.tag.as_deref() == Some("select")
+                        && focused.tag.as_deref() != Some("select")
+                    {
+                        // A software WebView has no OS select popup to own
+                        // focus for us. Make the same-origin control the
+                        // keyboard target explicitly after its native click.
+                        let _ = focus_select_at_point(servo, webview, point);
+                        focused = inspect_active_element(servo, webview).unwrap_or_default();
+                    }
+                    if focused.editable
+                        || focused.iframe
+                        || focused.tag.as_deref() == Some("select")
+                    {
                         let _ = refresh_focus_indicator(servo, webview);
                     } else {
                         // Mouse-clicked links and buttons may receive native
@@ -908,6 +920,8 @@ fn engine_loop(
                     // both observations so a successful input click always
                     // enters input mode.
                     editable: before.editable || focused.editable,
+                    select: before.tag.as_deref() == Some("select")
+                        || focused.tag.as_deref() == Some("select"),
                     iframe: before.iframe || focused.iframe,
                     cdp_fallback: false,
                     target_tag: before.tag,
@@ -937,6 +951,19 @@ fn engine_loop(
             }
             Ok(EngineCommand::Key(key, reply)) => {
                 let webview = &tabs[active].webview;
+                // Servo 0.7's offscreen embedder does not provide a native
+                // select-popup surface.  Choosing with an arrow key must
+                // therefore update a focused HTMLSelectElement directly;
+                // otherwise ArrowUp/ArrowDown falls through to page scrolling
+                // and the terminal appears to have stopped responding.
+                if let Some(direction) = select_option_direction(&key) {
+                    if advance_focused_select(servo, webview, direction).unwrap_or(false) {
+                        pump(servo, webview, 2);
+                        let _ = refresh_focus_indicator(servo, webview);
+                        let _ = reply.send(Ok(()));
+                        continue;
+                    }
+                }
                 send_key(webview, &key);
                 pump(servo, webview, 2);
                 let _ = refresh_focus_indicator(servo, webview);
@@ -1030,7 +1057,7 @@ fn evaluate_javascript(servo: &Servo, webview: &WebView, script: &str) -> Result
 fn focus_first_editable(servo: &Servo, webview: &WebView) -> Result<bool> {
     const SCRIPT: &str = r#"
         (() => {
-          const selector = 'input:not([type=hidden]):not([disabled]),textarea:not([disabled]),[contenteditable=true],[contenteditable=""]';
+          const selector = 'input:not([type=hidden]):not([disabled]),textarea:not([disabled]),select:not([disabled]),[contenteditable=true],[contenteditable=""]';
           const isVisible = (element) => {
             const rect = element.getBoundingClientRect();
             return rect.width > 0 && rect.height > 0;
@@ -1063,7 +1090,8 @@ fn focus_first_editable(servo: &Servo, webview: &WebView) -> Result<bool> {
     // the child document's focused control. Treat that keyboard destination as
     // a successful focus result too; it is the native Tab traversal that will
     // deliver subsequent character events to the child control.
-    let accepts_keyboard = focused.editable || focused.iframe;
+    let accepts_keyboard =
+        focused.editable || focused.iframe || focused.tag.as_deref() == Some("select");
     if accepts_keyboard {
         let _ = refresh_focus_indicator(servo, webview);
     }
@@ -1186,6 +1214,32 @@ fn focus_editable_at_point(
     match evaluate_javascript(servo, webview, &script)? {
         JSValue::Boolean(focused) => Ok(focused),
         other => bail!("unexpected point-focus result from Servo: {other:?}"),
+    }
+}
+
+/// Focus a visible same-origin native select at the pointer position.
+///
+/// It is intentionally separate from `focus_editable_at_point`: a select does
+/// not accept text, but it does need to become the keyboard destination for
+/// terminal Up/Down selection.
+fn focus_select_at_point(
+    servo: &Servo,
+    webview: &WebView,
+    point: servo::DevicePoint,
+) -> Result<bool> {
+    let script = format!(
+        r#"(() => {{
+          const scale = window.devicePixelRatio || 1;
+          const element = document.elementFromPoint({:.3} / scale, {:.3} / scale);
+          if (!element || (element.tagName || '').toLowerCase() !== 'select' || element.disabled) return false;
+          element.focus();
+          return document.activeElement === element;
+        }})()"#,
+        point.x, point.y
+    );
+    match evaluate_javascript(servo, webview, &script)? {
+        JSValue::Boolean(focused) => Ok(focused),
+        other => bail!("unexpected select-focus result from Servo: {other:?}"),
     }
 }
 
@@ -1566,6 +1620,50 @@ fn send_key(webview: &WebView, key: &str) {
         };
         webview.notify_input_event(InputEvent::Keyboard(event(KeyState::Down, key.clone())));
         webview.notify_input_event(InputEvent::Keyboard(event(KeyState::Up, key)));
+    }
+}
+
+fn select_option_direction(key: &str) -> Option<i32> {
+    match key {
+        "ArrowUp" => Some(-1),
+        "ArrowDown" => Some(1),
+        _ => None,
+    }
+}
+
+/// Select an enabled option in the currently focused native `<select>`.
+///
+/// Servo's software/offscreen embedder has no separate select-popup widget to
+/// display above a terminal frame.  The DOM update keeps the control usable
+/// through the same keyboard contract as a terminal: arrow keys choose an
+/// option and normal `input`/`change` listeners still observe the result.
+fn advance_focused_select(servo: &Servo, webview: &WebView, direction: i32) -> Result<bool> {
+    let script = format!(
+        r#"(() => {{
+          const select = document.activeElement;
+          if (!select || (select.tagName || '').toLowerCase() !== 'select' || select.disabled) return false;
+          const options = Array.from(select.options || []);
+          if (!options.length) return false;
+          let index = Number(select.selectedIndex);
+          if (!Number.isInteger(index)) index = -1;
+          for (let step = 0; step < options.length; step += 1) {{
+            index = (index + ({direction}) + options.length) % options.length;
+            const option = options[index];
+            const parent = option && option.parentElement;
+            if (!option || option.disabled || (parent && parent.disabled)) continue;
+            if (select.selectedIndex !== index) {{
+              select.selectedIndex = index;
+              select.dispatchEvent(new Event('input', {{ bubbles: true }}));
+              select.dispatchEvent(new Event('change', {{ bubbles: true }}));
+            }}
+            return true;
+          }}
+          return false;
+        }})()"#
+    );
+    match evaluate_javascript(servo, webview, &script)? {
+        JSValue::Boolean(changed) => Ok(changed),
+        other => bail!("unexpected focused-select result from Servo: {other:?}"),
     }
 }
 

@@ -1490,6 +1490,18 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                                     message = format!(
                                         "clicked editable field {column},{row}; input mode enabled{focus_state}{focus_detail}{popup_detail}"
                                     );
+                                } else if outcome.select {
+                                    // A select is not a text editor, but it
+                                    // needs the same terminal key forwarding
+                                    // for Up/Down, Tab, and Enter. Treating it
+                                    // as a normal click made those keys run
+                                    // fpasobrowser's page-scroll/commands
+                                    // instead, so Windows users could neither
+                                    // open nor choose a drop-down value.
+                                    input_mode = InputMode::BrowserInput;
+                                    message = format!(
+                                        "clicked select field {column},{row}; Up/Down choose, Tab moves focus, Esc normal{focus_detail}{popup_detail}"
+                                    );
                                 } else if outcome.iframe {
                                     // Servo can keep keyboard focus in the
                                     // child browsing context while the parent

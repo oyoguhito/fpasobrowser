@@ -309,6 +309,7 @@ interactive `?` panel also displays version and build information.
 | `i` | Enter browser-input mode |
 | `Esc` in input mode | Blur the page field and return to normal mode |
 | `Tab`, `Shift+Tab`, `Enter` in input mode | Move focus / activate the focused page element |
+| `Up`, `Down` in a focused select | Choose the previous / next enabled option |
 | `t`, `x`, `{`, `}`, `Ctrl+Tab`, `Ctrl+Shift+Tab` | New tab, close active tab, previous tab, next tab |
 | `f` | Show numbered link/action hints, then enter the hint number |
 | Left click | Forward a pointer click to the WebView |
@@ -317,8 +318,10 @@ interactive `?` panel also displays version and build information.
 
 Normal mode reserves commands such as `q`, `r`, `g`, and `f` for
 fpasobrowser, and printable keys are not forwarded to the page. Press `i` to
-focus the first visible editable control before typing into a page form, or
-click an editable control to enter input mode. If Servo reports only the parent
+focus the first visible editable control or native select before interacting
+with a page form, or click an editable control or select to enter input mode.
+For an offscreen native select, `Up` and `Down` choose enabled options and
+dispatch normal page `input` and `change` events. If Servo reports only the parent
 iframe after a click, fpasobrowser retains input mode so the child control can
 receive text and focus traversal; press `Esc` to return to normal mode. The
 focus search also supports a same-origin iframe. When the page itself provides
