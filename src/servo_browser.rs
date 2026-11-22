@@ -1598,12 +1598,18 @@ fn wait_for_navigation_frame(
         servo.spin_event_loop();
         webview.paint();
         let fresh_frame = page_signals.frame_serial.load(Ordering::Acquire) > previous_frame_serial;
-        let expected_url_loaded = expected_url
-            .as_ref()
-            .is_none_or(|expected| webview.url().as_ref() == Some(expected));
+        // `load()` commonly reaches a different final URL: Google selects a
+        // regional host, an identity provider may insert a consent page, and
+        // an ordinary HTTP URL can upgrade to HTTPS. A fresh frame plus a
+        // completed WebView is the reliable navigation boundary; requiring
+        // byte-for-byte equality with the requested URL turned successful
+        // redirects into a fatal startup timeout and a blank recovery screen.
+        // Keep `expected_url` for diagnostic context below, but accept the
+        // WebView's final URL whenever it has one.
+        let final_url_loaded = webview.url().is_some();
         if webview.load_status() == LoadStatus::Complete
             && fresh_frame
-            && expected_url_loaded
+            && final_url_loaded
             && rendering_context.read_to_image(bounds).is_some()
         {
             return Ok(());
