@@ -78,6 +78,11 @@ struct Cli {
     #[arg(long)]
     debug: bool,
 
+    /// Show a rolling POST/RECV operation timeline over the terminal page.
+    /// `--debug` enables this overlay too; press D in normal mode to toggle it.
+    #[arg(long)]
+    debug_overlay: bool,
+
     /// URL to open. When omitted, show fpasobrowser's built-in start page.
     url: Option<Url>,
 }
@@ -243,6 +248,7 @@ async fn run(cli: Cli) -> Result<()> {
         sixel_cell_pixels: cli.sixel_cell_size,
         ui_chrome: cli.ui,
         initial_activity: backend_selection.initial_activity,
+        debug_overlay: cli.debug_overlay,
     };
     app::run(url, backend, options).await
 }
@@ -469,6 +475,13 @@ mod tests {
         let cli = Cli::try_parse_from(["fpasobrowser", "--ui", "compact"])
             .expect("parse compact terminal UI option");
         assert_eq!(cli.ui, UiChrome::Compact);
+    }
+
+    #[test]
+    fn diagnostics_overlay_option_is_parsed() {
+        let cli = Cli::try_parse_from(["fpasobrowser", "--debug-overlay"])
+            .expect("parse diagnostics overlay option");
+        assert!(cli.debug_overlay);
     }
 
     #[test]

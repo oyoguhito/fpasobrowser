@@ -64,6 +64,14 @@ An extracted Windows release archive includes `fpasobrowser.cmd` beside the
 executable. Run that CMD file to start the adjacent executable directly; it
 does not require PowerShell, Cargo, Python, or LLVM.
 
+For interactive browser diagnosis, `--debug` also shows an in-page
+**FPASOBROWSER DEVTOOLS** timeline. `POST engine click` and `POST engine key
+Enter` identify requests sent to the embedded browser; the matching `RECV`
+line is its reply and `TIMEOUT` is an application-side wait expiry. Screenshot,
+tab-info, and verification queries are included. Use `--debug-overlay` when
+only this visible timeline is wanted, and press `D` in normal mode to toggle
+it.
+
 ## Windows native: source-build prerequisites
 
 The release binary does not require Chromium, Firefox, a separate Servo

@@ -12,11 +12,12 @@ use crossterm::{
     cursor::MoveTo,
     event::{self, Event, KeyCode, KeyEventKind},
     queue,
-    style::Print,
+    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
     terminal::{Clear, ClearType},
 };
 use image::DynamicImage;
 use std::{
+    collections::VecDeque,
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -87,7 +88,9 @@ const TOOLBAR_BUTTONS: &[(&str, &str)] = &[
     ("[?]", "help"),
 ];
 const DEFAULT_ACTIVITY_MESSAGE: &str =
-    "?:help i:input g/t:URL [/] back/forward {/} tabs click/wheel";
+    "?:help i:input g/t:URL [/] back/forward {/} tabs D:diagnostics click/wheel";
+const DIAGNOSTIC_HISTORY_LIMIT: usize = 24;
+const DIAGNOSTIC_OVERLAY_ROWS: u16 = 10;
 
 #[derive(Debug, Clone, Default)]
 pub struct AppOptions {
@@ -103,6 +106,9 @@ pub struct AppOptions {
     /// Explains an automatic terminal-renderer fallback until the user takes
     /// the next action. Explicitly selected backends do not need this notice.
     pub initial_activity: Option<String>,
+    /// Show the rolling in-terminal operation timeline from startup. `--debug`
+    /// also enables it so stderr is not the sole source of diagnostics.
+    pub debug_overlay: bool,
 }
 
 struct RedrawOptions<'a> {
@@ -110,6 +116,7 @@ struct RedrawOptions<'a> {
     message: &'a str,
     show_help: bool,
     debug: bool,
+    diagnostics_visible: bool,
     /// Monotonic frame counter used only for the loading activity indicator.
     /// It is deliberately independent of page rendering so SIXEL can keep its
     /// lower polling frequency without a separately animated terminal loop.
@@ -129,6 +136,37 @@ struct PresentationFingerprint {
     image_height: u32,
     size: crate::render::RenderSize,
     show_help: bool,
+}
+
+/// A concise, in-terminal substitute for a browser developer-tools network
+/// pane. The embedded engine owns a single serialized command channel, so the
+/// useful boundary for diagnosis is POST (the app submits an operation) and
+/// RECV (its reply, timeout, or render result). Keep only recent entries so
+/// it remains readable on a terminal-sized overlay.
+#[derive(Default)]
+struct OperationTrace {
+    next_id: u64,
+    entries: VecDeque<String>,
+}
+
+impl OperationTrace {
+    fn record(&mut self, message: impl Into<String>) {
+        self.next_id = self.next_id.wrapping_add(1);
+        if self.entries.len() == DIAGNOSTIC_HISTORY_LIMIT {
+            self.entries.pop_front();
+        }
+        self.entries
+            .push_back(format!("{:04} {}", self.next_id, message.into()));
+    }
+
+    fn recent(&self, limit: usize) -> impl Iterator<Item = &str> {
+        self.entries
+            .iter()
+            .rev()
+            .take(limit)
+            .rev()
+            .map(String::as_str)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -345,6 +383,16 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
     terminal.flush()?;
     let mut browser_options = options.browser.clone();
     browser_options.terminal_cell_pixels = renderer.terminal_cell_pixels();
+    let mut diagnostics = OperationTrace::default();
+    let mut diagnostics_visible = options.debug_overlay || browser_options.debug;
+    diagnostics.record(format!(
+        "UI backend={} transport={} pane={}x{}",
+        renderer.name(),
+        renderer.transport_label(),
+        size.columns,
+        size.rows
+    ));
+    diagnostics.record(format!("POST engine launch url={}", state.url));
     if browser_options.debug {
         eprintln!(
             "fpasobrowser debug: terminal UI entered; backend={} transport={} pane={}x{}; launching browser",
@@ -360,6 +408,7 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
     )
     .await
     .context("embedded Servo launch timed out")??;
+    diagnostics.record("RECV engine launch ok");
     if browser_options.debug {
         eprintln!(
             "fpasobrowser debug: browser client ready at {state_url}",
@@ -441,9 +490,11 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                             message: &message,
                             show_help,
                             debug: browser_options.debug,
+                            diagnostics_visible,
                             loading_frame,
                             dump_screenshot: options.dump_screenshot.as_deref(),
                         },
+                        &mut diagnostics,
                     ),
                 )
                 .await;
@@ -521,6 +572,9 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
             }
         };
         let command = normalize_primary_mouse_command(command, &mut primary_mouse_down);
+        if !matches!(&command, Command::None | Command::MouseMove { .. }) {
+            diagnostics.record(format!("EVENT {command:?}"));
+        }
         if !browser_connected {
             presentation = None;
             match command {
@@ -773,6 +827,23 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                     }
                 }
             }
+            Command::ToggleDiagnostics => {
+                diagnostics_visible = !diagnostics_visible;
+                diagnostics.record(if diagnostics_visible {
+                    "UI diagnostics overlay shown"
+                } else {
+                    "UI diagnostics overlay hidden"
+                });
+                message = if diagnostics_visible {
+                    String::from("developer diagnostics shown; D hides")
+                } else {
+                    String::from("developer diagnostics hidden; D shows")
+                };
+                // Erase the old text overlay even when the page image itself
+                // has not changed.
+                presentation = None;
+                needs_redraw = true;
+            }
             Command::Help => {
                 show_help = !show_help;
                 message = if show_help {
@@ -917,9 +988,11 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                                 message: &hint_message,
                                 show_help,
                                 debug: browser_options.debug,
+                                diagnostics_visible,
                                 loading_frame,
                                 dump_screenshot: options.dump_screenshot.as_deref(),
                             },
+                            &mut diagnostics,
                         )
                         .await
                         {
@@ -1081,6 +1154,7 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
             }
             Command::BrowserKey(key) => {
                 show_working(&mut terminal, size, &format!("sending key {key}"))?;
+                diagnostics.record(format!("POST engine key {key}"));
                 let key_timeout = if key == "Enter" {
                     PAGE_ACTIVATION_TIMEOUT
                 } else {
@@ -1089,6 +1163,7 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                 let key_result = timeout(key_timeout, browser.press_key_with_fallback(key)).await;
                 match key_result {
                     Ok(Ok(())) => {
+                        diagnostics.record(format!("RECV engine key {key} ok"));
                         suppress_initial_input_key_until = None;
                         message = format!("sent key {key}");
                         terminal.status(size.rows, &message)?;
@@ -1103,6 +1178,7 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                         }
                     }
                     Ok(Err(error)) => {
+                        diagnostics.record(format!("RECV engine key {key} error: {error}"));
                         message = format!("key failed: {error}");
                         browser_connected = false;
                         input_mode = InputMode::Normal;
@@ -1111,6 +1187,7 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                         needs_redraw = true;
                     }
                     Err(_) => {
+                        diagnostics.record(format!("TIMEOUT app key {key} after {key_timeout:?}"));
                         // `timeout` only means this request's reply has not
                         // arrived. The serialized engine may still be loading
                         // a page; declaring it disconnected here stranded a
@@ -1173,6 +1250,7 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                 }
                 suppress_initial_input_key_until = None;
                 show_working(&mut terminal, size, "entering text")?;
+                diagnostics.record(format!("POST engine text U+{:04X}", u32::from(c)));
                 let text_result = timeout(
                     Duration::from_millis(1_200),
                     browser.type_text(c.to_string()),
@@ -1180,9 +1258,11 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                 .await;
                 match text_result {
                     Ok(Ok(())) => {
+                        diagnostics.record(format!("RECV engine text U+{:04X} ok", u32::from(c)));
                         message = format!("typed {c:?}; r redraw, Enter submit, Ctrl+Q quit");
                     }
                     Ok(Err(error)) => {
+                        diagnostics.record(format!("RECV engine text error: {error}"));
                         if c == '?' {
                             // Help must remain reachable even when input mode
                             // was left active after a page navigation and no
@@ -1239,6 +1319,7 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                         input_mode = InputMode::Normal;
                     }
                     Err(_) => {
+                        diagnostics.record(format!("TIMEOUT app text U+{:04X}", u32::from(c)));
                         message = format!("text {c:?} timed out; press r to relaunch, q to quit");
                         browser_connected = false;
                         input_mode = InputMode::Normal;
@@ -1467,10 +1548,14 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                     terminal.flush()?;
                 } else if row < size.rows {
                     show_working(&mut terminal, size, "handling mouse click")?;
+                    diagnostics.record(format!("POST engine click cell={column},{row}"));
                     let click_result =
                         timeout(PAGE_ACTIVATION_TIMEOUT, browser.click_js(column, row, size)).await;
                     match click_result {
                         Err(_) => {
+                            diagnostics.record(format!(
+                                "TIMEOUT app click cell={column},{row} after {PAGE_ACTIVATION_TIMEOUT:?}"
+                            ));
                             // A delayed Servo click can still finish on its
                             // owner thread (for example while creating an
                             // auxiliary WebView). Never launch the current
@@ -1491,6 +1576,14 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                         }
                         Ok(click_result) => match click_result {
                             Ok(outcome) => {
+                                diagnostics.record(format!(
+                                    "RECV engine click ok target={:?} active={:?} editable={} suggestion={} iframe={}",
+                                    outcome.target_tag,
+                                    outcome.active_tag,
+                                    outcome.editable,
+                                    outcome.suggestion,
+                                    outcome.iframe,
+                                ));
                                 let focus_detail = match (&outcome.target_tag, &outcome.active_tag)
                                 {
                                     (Some(target), Some(active)) => {
@@ -1566,6 +1659,7 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                                 }
                             }
                             Err(error) => {
+                                diagnostics.record(format!("RECV engine click error: {error}"));
                                 let verification = timeout(
                                     Duration::from_millis(300),
                                     browser.manual_verification_required(),
@@ -1855,10 +1949,20 @@ async fn redraw(
     state: &mut PageState,
     presentation: &mut Option<PresentationFingerprint>,
     options: RedrawOptions<'_>,
+    diagnostics: &mut OperationTrace,
 ) -> Result<RedrawOutcome> {
+    diagnostics.record("POST engine screenshot");
     let image = match browser.screenshot(size).await {
-        Ok(image) => image,
+        Ok(image) => {
+            diagnostics.record(format!(
+                "RECV engine screenshot ok {}x{}",
+                image.width(),
+                image.height()
+            ));
+            image
+        }
         Err(error) => {
+            diagnostics.record(format!("RECV engine screenshot error: {error}"));
             terminal.status(size.rows, &format!("redraw failed: {error}"))?;
             terminal.flush()?;
             return Err(error).context("capture browser screenshot");
@@ -1872,7 +1976,21 @@ async fn redraw(
     let debug_summary = options.debug.then(|| frame_debug_summary(&image));
     // Query all visible browser state in one engine round trip. This keeps the
     // URL, history affordances, and active tab label from one WebView snapshot.
-    let tab_info = browser.tab_info().await.unwrap_or_default();
+    diagnostics.record("POST engine tab-info");
+    let tab_info = match browser.tab_info().await {
+        Ok(tab_info) => {
+            diagnostics.record(format!(
+                "RECV engine tab-info ok loading={} url={}",
+                tab_info.is_loading,
+                tab_info.active_url.as_deref().unwrap_or("<none>")
+            ));
+            tab_info
+        }
+        Err(error) => {
+            diagnostics.record(format!("RECV engine tab-info error: {error}"));
+            TabInfo::default()
+        }
+    };
     if let Some(current_url) = &tab_info.active_url {
         if let Ok(url) = Url::parse(current_url) {
             state.url = url;
@@ -1886,10 +2004,19 @@ async fn redraw(
     // Verification detection is informational. A page can be between frames
     // after a click, so do not turn a transient DOM-query failure into a full
     // engine disconnect.
-    let verification_required = browser
-        .manual_verification_required()
-        .await
-        .unwrap_or(false);
+    diagnostics.record("POST engine verification-query");
+    let verification_required = match browser.manual_verification_required().await {
+        Ok(required) => {
+            diagnostics.record(format!(
+                "RECV engine verification-query ok required={required}"
+            ));
+            required
+        }
+        Err(error) => {
+            diagnostics.record(format!("RECV engine verification-query error: {error}"));
+            false
+        }
+    };
     let fingerprint = presentation_fingerprint(&image, size, options.show_help);
     if presentation.as_ref() != Some(&fingerprint) {
         // ANSI and SIXEL write directly into terminal cells, so they must
@@ -1922,6 +2049,9 @@ async fn redraw(
             draw_help_panel(terminal, size)?;
         }
         *presentation = Some(fingerprint);
+    }
+    if options.diagnostics_visible {
+        draw_diagnostics_overlay(terminal, size, diagnostics)?;
     }
     let active_tab_status = active_tab_status(&tab_info, state);
     let status_message = compose_activity_status(
@@ -1967,6 +2097,38 @@ async fn redraw(
     Ok(RedrawOutcome {
         is_loading: tab_info.is_loading,
     })
+}
+
+fn draw_diagnostics_overlay(
+    terminal: &mut Terminal,
+    size: crate::render::RenderSize,
+    diagnostics: &OperationTrace,
+) -> Result<()> {
+    let rows = size.rows.min(DIAGNOSTIC_OVERLAY_ROWS).max(1);
+    let columns = usize::from(size.columns);
+    let mut lines = Vec::with_capacity(usize::from(rows));
+    lines.push(String::from(
+        "FPASOBROWSER DEVTOOLS  POST/RECV timeline  [D: hide]",
+    ));
+    lines.extend(
+        diagnostics
+            .recent(usize::from(rows.saturating_sub(1)))
+            .map(ToOwned::to_owned),
+    );
+
+    for row in 0..rows {
+        let text = lines.get(usize::from(row)).map_or("", String::as_str);
+        queue!(
+            terminal.writer(),
+            MoveTo(0, row),
+            SetBackgroundColor(Color::Black),
+            SetForegroundColor(Color::White),
+            Clear(ClearType::CurrentLine),
+            Print(truncate_to_columns(text, columns)),
+        )?;
+    }
+    queue!(terminal.writer(), ResetColor)?;
+    Ok(())
 }
 
 /// Summarize enough source pixels to distinguish an all-black Servo capture
@@ -2346,6 +2508,7 @@ fn draw_help_panel(terminal: &mut Terminal, size: crate::render::RenderSize) -> 
         "Mouse toolbar: [B] back [F] forward [R] reload [URL] go [+Tab] new [<Tab]/[Tab>] switch [V] verify [?] help",
         "Keys: q/Ctrl+Q quit | Esc blur/previous tab | r/R reload | g URL | b/B or [ back | F or ] forward | t new tab | x close tab",
         "Tabs: {/}/Ctrl+Tab switch | v/V open browser for verification | f numbered link hints",
+        "Diagnostics: --debug or --debug-overlay shows POST/RECV timeline; D toggles it in normal mode",
         "Tabs: click a visible label to switch; click its × to close (the final tab is kept)",
         "Page: click page | wheel scroll | j/k or Up/Down scroll | Tab/Shift+Tab focus | Enter activate | f link hints",
         "Input: i enters input mode; the page focus ring is used when available, otherwise cyan marks focus; Tab/Shift+Tab moves it; Esc blurs",

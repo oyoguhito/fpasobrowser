@@ -58,6 +58,12 @@ build済みbinaryも`fpasobrowser --doctor`に対応します。これはコピ�
 展開済みWindows release archiveにはexeと同じdirectoryに`fpasobrowser.cmd`が含まれます。このCMDを
 実行するとexeを直接起動します。PowerShell、Cargo、Python、LLVMは必要ありません。
 
+対話操作の診断では、`--debug`を指定すると標準errorへの出力に加え、page上部に
+**FPASOBROWSER DEVTOOLS** のoperation timelineを表示します。`POST engine click`と
+`POST engine key Enter`はembedded browserへ送った要求、対応する`RECV`はreply、`TIMEOUT`は
+app側の待機切れです。screenshot、tab情報、verification queryも表示します。画面内timelineだけを
+有効にするには`--debug-overlay`を指定します。normal modeで`D`を押すと表示を切替できます。
+
 ## Windows native: source buildの前提条件
 
 release binaryはChromium、Firefox、別途のServo実行ファイル、Pythonを必要としません。一方、sourceから

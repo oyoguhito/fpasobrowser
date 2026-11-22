@@ -110,6 +110,12 @@ Diagnosticsを`graphics`でfilterすると、最初のframeで
 `fpasoterm graphics transfer received`と`fpasoterm graphics rendered`が出ます。前者が
 出ない場合はfpasotermもこのbridge対応版へ更新してください。
 
+`--debug`では、標準errorへの出力に加えてpage上部へ **FPASOBROWSER DEVTOOLS** の
+operation timelineを表示します。`POST engine click` / `POST engine key Enter`はbrowserへの
+要求送信、対応する`RECV`はreply、`TIMEOUT`はapp側の待機切れです。screenshot、tab情報、
+verification queryも同じ表示で追跡できます。通常起動でこの表示だけを使うには
+`--debug-overlay`を指定します。normal modeで`D`を押すと表示・非表示を切替できます。
+
 Windows ConPTYの長いOSC sequenceが壊れる既知の経路を避けるため、bridgeはpayloadを短い
 OSC packetへ分割して送ります。bridgeではWebView2のPNG合成を通さず、zlib圧縮したraw RGBA
 （`format=32`、`compression=z`）をfpasotermのCanvasへ直接描画します。成功時は
