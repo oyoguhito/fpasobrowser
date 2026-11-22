@@ -36,6 +36,10 @@ const DEFAULT_BROWSER_VIEWPORT_HEIGHT: u32 = 540;
 const ENGINE_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 const FRAME_WAIT_STEPS: usize = 600;
 const FRAME_WAIT_INTERVAL: Duration = Duration::from_millis(16);
+// `take_screenshot` callbacks can be deferred indefinitely by Servo while a
+// page swaps documents. The software surface is still readable, so wait only
+// briefly for the authoritative callback before using that painted frame.
+const SCREENSHOT_CALLBACK_WAIT_STEPS: usize = 60;
 // Windows ANGLE can expose the software surface's white clear colour one or
 // two paints before WebRender has copied the document scene into it. Keep the
 // retry small and only use it for a near-white/transparent uniform frame;
@@ -942,6 +946,17 @@ fn engine_loop(
                         point.into(),
                     )));
                     pump(servo, webview, 3);
+                    // Servo's offscreen input path can deliver pointer events
+                    // to an anchor without carrying out its default
+                    // navigation. The terminal has already identified the
+                    // resolved URL under the pointer, so load it explicitly
+                    // in the same WebView. This preserves native click
+                    // handlers while making ordinary links (for example
+                    // Google About/Store) reliably navigable.
+                    if let Some(href) = before.href.clone() {
+                        webview.load(href);
+                        pump(servo, webview, 2);
+                    }
                     let navigation_in_flight = webview.load_status() != LoadStatus::Complete;
                     // Only controls that need keyboard ownership require a
                     // post-click DOM query. A link or button has already
@@ -1050,6 +1065,17 @@ fn engine_loop(
                 }
                 send_key(webview, &key);
                 pump(servo, webview, 2);
+                if key == "Enter" && webview.load_status() == LoadStatus::Complete {
+                    // Native Enter is always sent first. Servo's offscreen
+                    // keyboard embedder can, however, dispatch the key event
+                    // without performing the HTML default form action. Queue
+                    // a deliberately narrow search-form submit as a fallback
+                    // but do not wait for its JavaScript callback: navigation
+                    // tears down that document before such a callback is
+                    // guaranteed to arrive.
+                    dispatch_focused_search_submit(webview);
+                    pump(servo, webview, 2);
+                }
                 let navigation_in_flight = webview.load_status() != LoadStatus::Complete;
                 if debug && key == "Enter" {
                     eprintln!(
@@ -1127,6 +1153,7 @@ struct InspectedTarget {
     iframe: bool,
     suggestion: bool,
     tag: Option<String>,
+    href: Option<Url>,
 }
 
 fn pump(servo: &Servo, webview: &WebView, steps: usize) {
@@ -1253,7 +1280,13 @@ fn inspect_click_target(
               option = option.parentElement;
             }}
             const suggestion = !!option;
-            return [editable ? '1' : '0', (nested || tag === 'iframe') ? '1' : '0', suggestion ? '1' : '0', tag].join('|');
+            let anchor = element;
+            while (anchor && anchor !== doc.documentElement) {{
+              if ((anchor.tagName || '').toLowerCase() === 'a' && anchor.href) break;
+              anchor = anchor.parentElement;
+            }}
+            const href = anchor && anchor.href ? anchor.href : '';
+            return [editable ? '1' : '0', (nested || tag === 'iframe') ? '1' : '0', suggestion ? '1' : '0', tag, href].join('|');
           }};
           return inspect(document, {:.3} / scale, {:.3} / scale, false);
         }})()"#,
@@ -1262,7 +1295,7 @@ fn inspect_click_target(
     let JSValue::String(value) = evaluate_javascript(servo, webview, &script)? else {
         return Ok(InspectedTarget::default());
     };
-    let mut fields = value.splitn(4, '|');
+    let mut fields = value.splitn(5, '|');
     let editable = fields.next() == Some("1");
     let iframe = fields.next() == Some("1");
     let suggestion = fields.next() == Some("1");
@@ -1270,11 +1303,16 @@ fn inspect_click_target(
         .next()
         .filter(|tag| !tag.is_empty())
         .map(ToOwned::to_owned);
+    let href = fields
+        .next()
+        .filter(|href| !href.is_empty())
+        .and_then(|href| Url::parse(href).ok());
     Ok(InspectedTarget {
         editable,
         iframe,
         suggestion,
         tag,
+        href,
     })
 }
 
@@ -1397,6 +1435,7 @@ fn inspect_active_element(servo: &Servo, webview: &WebView) -> Result<InspectedT
         iframe,
         suggestion: false,
         tag,
+        href: None,
     })
 }
 
@@ -1573,6 +1612,10 @@ fn capture_frame(
     rendering_context
         .make_current()
         .map_err(|error| anyhow::anyhow!("make Servo context current for screenshot: {error:?}"))?;
+    let bounds = DeviceIntRect::new(
+        DeviceIntPoint::zero(),
+        DeviceIntPoint::new(viewport.width as i32, viewport.height as i32),
+    );
     // A form submission or link activation can leave the WebView in Loading
     // state for several seconds. `take_screenshot` may deliberately defer its
     // callback until that navigation has a new scene, which previously made
@@ -1580,10 +1623,6 @@ fn capture_frame(
     // navigation as a disconnected browser. Present the last painted frame
     // while loading instead; the app polls again until Servo reports Complete.
     if webview.load_status() != LoadStatus::Complete {
-        let bounds = DeviceIntRect::new(
-            DeviceIntPoint::zero(),
-            DeviceIntPoint::new(viewport.width as i32, viewport.height as i32),
-        );
         if let Some(image) = rendering_context.read_to_image(bounds) {
             let image = DynamicImage::ImageRgba8(image);
             // Do not present an untouched ANGLE/SoftwareRenderingContext
@@ -1605,7 +1644,7 @@ fn capture_frame(
         });
 
         let mut received_screenshot = false;
-        for _ in 0..FRAME_WAIT_STEPS {
+        for _ in 0..SCREENSHOT_CALLBACK_WAIT_STEPS {
             servo.spin_event_loop();
             webview.paint();
             if let Some(result) = screenshot.borrow_mut().take() {
@@ -1622,7 +1661,22 @@ fn capture_frame(
             thread::sleep(FRAME_WAIT_INTERVAL);
         }
         if !received_screenshot {
-            bail!("timed out waiting for a Servo screenshot");
+            // The current software surface is valid even when Servo has
+            // deferred `take_screenshot` during a document transition. A
+            // real, painted frame is preferable to declaring a live engine
+            // disconnected; the next redraw can obtain the authoritative
+            // callback once the page settles.
+            if let Some(image) = rendering_context.read_to_image(bounds) {
+                let image = DynamicImage::ImageRgba8(image);
+                if !is_probably_unpainted_surface(&image) {
+                    return Ok(image);
+                }
+            }
+            if attempt < UNPAINTED_FRAME_RETRIES {
+                thread::sleep(UNPAINTED_FRAME_RETRY_INTERVAL);
+                continue;
+            }
+            bail!("timed out waiting for a Servo screenshot and no painted surface was available");
         }
     }
     bail!("timed out waiting for a Servo screenshot")
@@ -1752,6 +1806,45 @@ fn send_key(webview: &WebView, key: &str) {
         webview.notify_input_event(InputEvent::Keyboard(event(KeyState::Down, key.clone())));
         webview.notify_input_event(InputEvent::Keyboard(event(KeyState::Up, key)));
     }
+}
+
+/// Queue a default form submission for the currently focused search control.
+///
+/// This intentionally has no synchronous result: on a successful submission
+/// the page may replace its document before Servo invokes the evaluation
+/// callback. Restricting it to search-like controls preserves ordinary
+/// textarea newline behavior.
+fn dispatch_focused_search_submit(webview: &WebView) {
+    const SCRIPT: &str = r#"(() => {
+      const active = document.activeElement;
+      if (!active || active.disabled || active.readOnly || active.isContentEditable) return false;
+      const tag = (active.tagName || '').toLowerCase();
+      const type = (active.getAttribute('type') || 'text').toLowerCase();
+      const role = (active.getAttribute('role') || '').toLowerCase();
+      const hint = (active.getAttribute('enterkeyhint') || '').toLowerCase();
+      const input = tag === 'input' && !['button', 'checkbox', 'file', 'hidden', 'image', 'radio', 'reset', 'submit'].includes(type);
+      const textarea = tag === 'textarea' && (role === 'searchbox' || role === 'combobox' || ['search', 'go', 'send', 'done'].includes(hint));
+      if (!input && !textarea) return false;
+      const form = active.form || active.closest('form');
+      if (!form) return false;
+      const submitter = form.querySelector('button[type="submit"]:not([disabled]), input[type="submit"]:not([disabled])');
+      try {
+        if (typeof form.requestSubmit === 'function') {
+          form.requestSubmit(submitter || undefined);
+          return true;
+        }
+        if (submitter && typeof submitter.click === 'function') {
+          submitter.click();
+          return true;
+        }
+        if (typeof form.submit === 'function') {
+          form.submit();
+          return true;
+        }
+      } catch (_) {}
+      return false;
+    })()"#;
+    webview.evaluate_javascript(SCRIPT, |_| {});
 }
 
 fn select_option_direction(key: &str) -> Option<i32> {
