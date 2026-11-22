@@ -73,7 +73,9 @@ checked-inの`.cargo/config.toml`は、Servoのparallel Stylo CSS workerへServo
 8 MiB stackをcompile時に設定します。これによりdebug source buildで複雑なpageを表示した際の
 `StyleThread#N has overflowed its stack`を防ぎます。launcherはこの設定fileもbuild inputとして
 確認するため、更新をpullした後に一度`./bin/fpasobrowser --rebuild`または
-`.\fpasobrowser.cmd --rebuild`を実行してStyloを再compileしてください。
+`.\fpasobrowser.cmd --rebuild`を実行してStyloを再compileしてください。成功時には
+`rebuilding Servo's Stylo CSS worker with an 8 MiB stack`と表示されるため、このlineを確認してから
+browserを起動してください。
 
 ## Windows の確認手順
 

@@ -180,7 +180,9 @@ workers an 8 MiB stack, matching Servo's own build configuration. This avoids
 `StyleThread#N has overflowed its stack` on complex pages in a debug source
 build. The launcher treats that configuration as a build input: after pulling
 an update, run `./bin/fpasobrowser --rebuild` or
-`.\fpasobrowser.cmd --rebuild` once to rebuild Stylo with the new setting.
+`.\fpasobrowser.cmd --rebuild` once to rebuild Stylo with the new setting. A
+successful rebuild explicitly reports `rebuilding Servo's Stylo CSS worker with
+an 8 MiB stack`; wait for that line before launching the browser.
 
 The omitted backend automatically selects high-resolution `kitty` when the
 terminal advertises it (including fpasoterm), and otherwise selects portable

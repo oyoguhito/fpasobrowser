@@ -489,7 +489,19 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
             .map(|duration| duration.min(Duration::from_millis(100)))
             .unwrap_or(Duration::from_millis(100));
 
-        let command = match input::read_command(input_timeout, input_mode) {
+        // The disconnected screen promises `r` to relaunch and `q` to quit.
+        // A page can disconnect while its editable control still has terminal
+        // input mode selected (for example, after a Stylo worker crash during
+        // a form submission). Never decode recovery keys as page text in that
+        // state; doing so made the advertised recovery controls unreachable.
+        let command_input_mode = if browser_connected {
+            input_mode
+        } else {
+            input_mode = InputMode::Normal;
+            suppress_initial_input_key_until = None;
+            InputMode::Normal
+        };
+        let command = match input::read_command(input_timeout, command_input_mode) {
             Ok(command) => command,
             Err(error) => {
                 // A terminal event error must not unwind the application after

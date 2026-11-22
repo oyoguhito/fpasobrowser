@@ -8,6 +8,11 @@ script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 repo_dir="$(CDPATH= cd -- "$script_dir/.." && pwd)"
 binary="${FPASOBROWSER_BINARY:-$repo_dir/target/debug/fpasobrowser}"
 cargo_command="${CARGO:-cargo}"
+# `option_env!` in Stylo makes this a compile-time setting. Cargo's normal
+# package clean for fpasobrowser does not necessarily remove an already-built
+# dependency, so retain a local marker and explicitly clean Stylo once when a
+# checkout gains or changes the configured worker stack size.
+stylo_stack_stamp="$repo_dir/target/debug/.fpasobrowser-stylo-stack-8192"
 
 doctor_missing=false
 
@@ -22,6 +27,22 @@ needs_local_build() {
         return 0
     fi
     if find "$repo_dir/src" -type f -newer "$binary" -print -quit | grep -q .; then
+        return 0
+    fi
+    return 1
+}
+
+needs_stylo_stack_rebuild() {
+    # A first build has no stale dependency to remove. Once a local binary
+    # exists, a missing or older marker means its Stylo crate could still have
+    # been compiled with the old 512 KiB worker stack.
+    if [[ ! -x "$binary" ]]; then
+        return 1
+    fi
+    if [[ ! -f "$stylo_stack_stamp" ]]; then
+        return 0
+    fi
+    if [[ "$repo_dir/.cargo/config.toml" -nt "$stylo_stack_stamp" ]]; then
         return 0
     fi
     return 1
@@ -135,6 +156,12 @@ if needs_local_build; then
     needs_build=true
 fi
 
+needs_stylo_rebuild=false
+if needs_stylo_stack_rebuild; then
+    needs_stylo_rebuild=true
+    needs_build=true
+fi
+
 if [[ "${1:-}" == "--doctor" && "$#" -eq 1 ]]; then
     run_doctor
     exit $?
@@ -172,7 +199,13 @@ if [[ "$needs_build" == true ]]; then
         if [[ "$force_rebuild" == true ]]; then
             "$cargo_command" clean -p fpasobrowser
         fi
+        if [[ "$force_rebuild" == true || "$needs_stylo_rebuild" == true ]]; then
+            echo "fpasobrowser: rebuilding Servo's Stylo CSS worker with an 8 MiB stack..." >&2
+            "$cargo_command" clean -p stylo
+        fi
         "$cargo_command" build --locked --bin fpasobrowser
+        mkdir -p "$(dirname "$stylo_stack_stamp")"
+        printf '%s\n' 'SERVO_STYLE_THREAD_STACK_SIZE_KB=8192' > "$stylo_stack_stamp"
     )
 fi
 

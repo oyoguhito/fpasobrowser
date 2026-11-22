@@ -254,6 +254,14 @@ mod tests {
     }
 
     #[test]
+    fn normal_mode_maps_the_recovery_key_to_reload() {
+        assert_eq!(
+            key_command(key(KeyCode::Char('r')), InputMode::Normal).expect("read key"),
+            Command::Reload
+        );
+    }
+
+    #[test]
     fn ctrl_tab_switches_viewer_tabs_even_during_page_input() {
         let key = KeyEvent {
             code: KeyCode::Tab,

@@ -9,6 +9,7 @@ $binary = if ($env:FPASOBROWSER_BINARY) {
 } else {
     Join-Path $repoDir "target\debug\fpasobrowser.exe"
 }
+$styloStackStamp = Join-Path $repoDir "target\debug\.fpasobrowser-stylo-stack-8192"
 
 function Resolve-FpasobrowserCargo {
     $cargoCommand = Get-Command cargo -ErrorAction SilentlyContinue
@@ -46,6 +47,23 @@ function Test-FpasobrowserNeedsBuild {
         Where-Object { $_.LastWriteTimeUtc -gt $binaryTime } |
         Select-Object -First 1
     return $null -ne $newerSource
+}
+
+function Test-FpasobrowserNeedsStyloStackRebuild {
+    # `SERVO_STYLE_THREAD_STACK_SIZE_KB` is observed by Stylo through
+    # `option_env!` at compile time. `cargo clean -p fpasobrowser` alone can
+    # preserve the previously compiled Stylo dependency, so a missing/outdated
+    # marker means we must explicitly rebuild that dependency once.
+    if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
+        return $false
+    }
+    if (-not (Test-Path -LiteralPath $styloStackStamp -PathType Leaf)) {
+        return $true
+    }
+    $configPath = Join-Path $repoDir ".cargo\config.toml"
+    return (Test-Path -LiteralPath $configPath -PathType Leaf) -and
+        ((Get-Item -LiteralPath $configPath).LastWriteTimeUtc -gt
+            (Get-Item -LiteralPath $styloStackStamp).LastWriteTimeUtc)
 }
 
 function Resolve-FpasobrowserPython3 {
@@ -155,6 +173,10 @@ function Invoke-FpasobrowserDoctor {
 }
 
 $needsBuild = Test-FpasobrowserNeedsBuild
+$needsStyloStackRebuild = Test-FpasobrowserNeedsStyloStackRebuild
+if ($needsStyloStackRebuild) {
+    $needsBuild = $true
+}
 
 if ($args.Count -eq 1 -and $args[0] -eq "--doctor") {
     if (Invoke-FpasobrowserDoctor) {
@@ -212,10 +234,22 @@ if ($needsBuild) {
                 exit $LASTEXITCODE
             }
         }
+        if ($forceRebuild -or $needsStyloStackRebuild) {
+            Write-Host "fpasobrowser: rebuilding Servo's Stylo CSS worker with an 8 MiB stack..."
+            & $cargoCommand.Source clean -p stylo
+            if ($LASTEXITCODE -ne 0) {
+                exit $LASTEXITCODE
+            }
+        }
         & $cargoCommand.Source build --locked --bin fpasobrowser
         if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
         }
+        [System.IO.Directory]::CreateDirectory((Split-Path -Parent $styloStackStamp)) | Out-Null
+        [System.IO.File]::WriteAllText(
+            $styloStackStamp,
+            "SERVO_STYLE_THREAD_STACK_SIZE_KB=8192$([Environment]::NewLine)"
+        )
     } finally {
         Pop-Location
     }
