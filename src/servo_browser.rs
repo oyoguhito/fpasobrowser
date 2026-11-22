@@ -553,12 +553,18 @@ fn run_engine(
     match result {
         Ok(Ok(())) => {}
         Ok(Err(error)) => {
+            if debug {
+                eprintln!("fpasobrowser debug: Servo engine stopped: {error:#}");
+            }
             let _ = ready_sender.send(Err(error));
         }
         Err(payload) => {
+            let message = panic_message(payload);
+            if debug {
+                eprintln!("fpasobrowser debug: Servo engine panicked: {message}");
+            }
             let _ = ready_sender.send(Err(anyhow::anyhow!(
-                "Servo engine panicked during startup: {}",
-                panic_message(payload)
+                "Servo engine panicked during startup: {message}"
             )));
         }
     }
@@ -986,13 +992,21 @@ fn engine_loop(
                 if submitted_search_form {
                     pump(servo, webview, 4);
                 }
+                let navigation_in_flight =
+                    submitted_search_form || webview.load_status() != LoadStatus::Complete;
                 if debug && key == "Enter" {
                     eprintln!(
-                        "fpasobrowser debug: Enter dispatched; search-form fallback submitted={submitted_search_form} load-status={:?}",
-                        webview.load_status()
+                        "fpasobrowser debug: Enter dispatched; search-form fallback submitted={submitted_search_form} navigation-in-flight={navigation_in_flight} load-status={:?}",
+                        webview.load_status(),
                     );
                 }
-                let _ = refresh_focus_indicator(servo, webview);
+                // A form submission can replace the document synchronously.
+                // Do not evaluate the focus-overlay script against a document
+                // that Servo is tearing down; that can terminate the embedded
+                // engine and leave the terminal on its disconnected screen.
+                if !navigation_in_flight {
+                    let _ = refresh_focus_indicator(servo, webview);
+                }
                 let _ = reply.send(Ok(()));
             }
             Ok(EngineCommand::FocusFirstEditable(reply)) => {
