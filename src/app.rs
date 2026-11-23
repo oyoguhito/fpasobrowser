@@ -344,6 +344,10 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
     }
 
     let mut terminal = Terminal::enter(options.ui_chrome).context("enter terminal UI")?;
+    let mut diagnostics_visible = options.debug_overlay || options.browser.debug;
+    if diagnostics_visible {
+        terminal.set_diagnostics_rows(DIAGNOSTIC_OVERLAY_ROWS);
+    }
     let renderer = SelectedBackend::from_choice_with_sixel_cell_pixels(
         backend_choice,
         options.sixel_cell_pixels,
@@ -384,7 +388,6 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
     let mut browser_options = options.browser.clone();
     browser_options.terminal_cell_pixels = renderer.terminal_cell_pixels();
     let mut diagnostics = OperationTrace::default();
-    let mut diagnostics_visible = options.debug_overlay || browser_options.debug;
     diagnostics.record(format!(
         "UI backend={} transport={} pane={}x{}",
         renderer.name(),
@@ -730,13 +733,16 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
             }
             Command::Back => {
                 show_working(&mut terminal, size, "going back")?;
+                diagnostics.record("POST engine back");
                 match browser.go_back().await {
                     Ok(()) => {
+                        diagnostics.record("RECV engine back ok");
                         show_help = false;
                         message = String::from("went back");
                         schedule_redraw_burst(&mut pending_redraw_at, &mut redraw_burst_remaining);
                     }
                     Err(error) => {
+                        diagnostics.record(format!("RECV engine back error: {error}"));
                         message = format!("back failed: {error}");
                         terminal.status(size.rows, &message)?;
                         terminal.flush()?;
@@ -745,13 +751,16 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
             }
             Command::Forward => {
                 show_working(&mut terminal, size, "going forward")?;
+                diagnostics.record("POST engine forward");
                 match browser.go_forward().await {
                     Ok(()) => {
+                        diagnostics.record("RECV engine forward ok");
                         show_help = false;
                         message = String::from("went forward");
                         schedule_redraw_burst(&mut pending_redraw_at, &mut redraw_burst_remaining);
                     }
                     Err(error) => {
+                        diagnostics.record(format!("RECV engine forward error: {error}"));
                         message = format!("forward failed: {error}");
                         terminal.status(size.rows, &message)?;
                         terminal.flush()?;
@@ -829,15 +838,20 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
             }
             Command::ToggleDiagnostics => {
                 diagnostics_visible = !diagnostics_visible;
+                terminal.set_diagnostics_rows(if diagnostics_visible {
+                    DIAGNOSTIC_OVERLAY_ROWS
+                } else {
+                    0
+                });
                 diagnostics.record(if diagnostics_visible {
                     "UI diagnostics overlay shown"
                 } else {
                     "UI diagnostics overlay hidden"
                 });
                 message = if diagnostics_visible {
-                    String::from("developer diagnostics shown; D hides")
+                    String::from("developer diagnostics shown; d/D hides")
                 } else {
-                    String::from("developer diagnostics hidden; D shows")
+                    String::from("developer diagnostics hidden; d/D shows")
                 };
                 // Erase the old text overlay even when the page image itself
                 // has not changed.
@@ -1337,6 +1351,7 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                 last_hover_status = None;
                 if terminal.has_toolbar() && row == toolbar_row(size) {
                     show_working(&mut terminal, size, "handling toolbar action")?;
+                    diagnostics.record(format!("POST toolbar click cell={column},{row}"));
                     if input_mode == InputMode::BrowserInput {
                         let _ =
                             timeout(Duration::from_millis(1_200), browser.blur_active_element())
@@ -1345,26 +1360,36 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                         suppress_initial_input_key_until = None;
                     }
                     if let Some(command) = toolbar_command(size.columns, column) {
+                        diagnostics.record(format!("ROUTE toolbar {command:?}"));
                         match command {
                             Command::Back => match browser.go_back().await {
                                 Ok(()) => {
+                                    diagnostics.record("RECV engine back ok");
                                     message = String::from("went back");
                                     schedule_redraw_burst(
                                         &mut pending_redraw_at,
                                         &mut redraw_burst_remaining,
                                     );
                                 }
-                                Err(error) => message = format!("back failed: {error}"),
+                                Err(error) => {
+                                    diagnostics.record(format!("RECV engine back error: {error}"));
+                                    message = format!("back failed: {error}");
+                                }
                             },
                             Command::Forward => match browser.go_forward().await {
                                 Ok(()) => {
+                                    diagnostics.record("RECV engine forward ok");
                                     message = String::from("went forward");
                                     schedule_redraw_burst(
                                         &mut pending_redraw_at,
                                         &mut redraw_burst_remaining,
                                     );
                                 }
-                                Err(error) => message = format!("forward failed: {error}"),
+                                Err(error) => {
+                                    diagnostics
+                                        .record(format!("RECV engine forward error: {error}"));
+                                    message = format!("forward failed: {error}");
+                                }
                             },
                             Command::Reload => match browser.reload().await {
                                 Ok(()) => {
@@ -2104,11 +2129,15 @@ fn draw_diagnostics_overlay(
     size: crate::render::RenderSize,
     diagnostics: &OperationTrace,
 ) -> Result<()> {
-    let rows = size.rows.min(DIAGNOSTIC_OVERLAY_ROWS).max(1);
+    let rows = terminal.diagnostics_rows().min(DIAGNOSTIC_OVERLAY_ROWS);
+    if rows == 0 {
+        return Ok(());
+    }
+    let start_row = terminal.diagnostics_start_row(size);
     let columns = usize::from(size.columns);
     let mut lines = Vec::with_capacity(usize::from(rows));
     lines.push(String::from(
-        "FPASOBROWSER DEVTOOLS  POST/RECV timeline  [D: hide]",
+        "FPASOBROWSER DEVTOOLS  POST/RECV timeline  [d/D: hide]",
     ));
     lines.extend(
         diagnostics
@@ -2116,11 +2145,11 @@ fn draw_diagnostics_overlay(
             .map(ToOwned::to_owned),
     );
 
-    for row in 0..rows {
-        let text = lines.get(usize::from(row)).map_or("", String::as_str);
+    for offset in 0..rows {
+        let text = lines.get(usize::from(offset)).map_or("", String::as_str);
         queue!(
             terminal.writer(),
-            MoveTo(0, row),
+            MoveTo(0, start_row + offset),
             SetBackgroundColor(Color::Black),
             SetForegroundColor(Color::White),
             Clear(ClearType::CurrentLine),
@@ -2508,7 +2537,7 @@ fn draw_help_panel(terminal: &mut Terminal, size: crate::render::RenderSize) -> 
         "Mouse toolbar: [B] back [F] forward [R] reload [URL] go [+Tab] new [<Tab]/[Tab>] switch [V] verify [?] help",
         "Keys: q/Ctrl+Q quit | Esc blur/previous tab | r/R reload | g URL | b/B or [ back | F or ] forward | t new tab | x close tab",
         "Tabs: {/}/Ctrl+Tab switch | v/V open browser for verification | f numbered link hints",
-        "Diagnostics: --debug or --debug-overlay shows POST/RECV timeline; D toggles it in normal mode",
+        "Diagnostics: --debug or --debug-overlay shows POST/RECV timeline; d/D toggles it in normal mode",
         "Tabs: click a visible label to switch; click its × to close (the final tab is kept)",
         "Page: click page | wheel scroll | j/k or Up/Down scroll | Tab/Shift+Tab focus | Enter activate | f link hints",
         "Input: i enters input mode; the page focus ring is used when available, otherwise cyan marks focus; Tab/Shift+Tab moves it; Esc blurs",

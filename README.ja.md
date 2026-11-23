@@ -114,7 +114,7 @@ Diagnosticsを`graphics`でfilterすると、最初のframeで
 operation timelineを表示します。`POST engine click` / `POST engine key Enter`はbrowserへの
 要求送信、対応する`RECV`はreply、`TIMEOUT`はapp側の待機切れです。screenshot、tab情報、
 verification queryも同じ表示で追跡できます。通常起動でこの表示だけを使うには
-`--debug-overlay`を指定します。normal modeで`D`を押すと表示・非表示を切替できます。
+`--debug-overlay`を指定します。normal modeで`d`または`D`を押すと表示・非表示を切替できます。
 
 Windows ConPTYの長いOSC sequenceが壊れる既知の経路を避けるため、bridgeはpayloadを短い
 OSC packetへ分割して送ります。bridgeではWebView2のPNG合成を通さず、zlib圧縮したraw RGBA

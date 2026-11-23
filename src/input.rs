@@ -163,7 +163,7 @@ fn key_command(key: KeyEvent, mode: InputMode) -> Result<Command> {
         KeyCode::Char('{') => Command::PreviousTab,
         KeyCode::Char('}') => Command::NextTab,
         KeyCode::Char('?') => Command::Help,
-        KeyCode::Char('D') => Command::ToggleDiagnostics,
+        KeyCode::Char('d') | KeyCode::Char('D') => Command::ToggleDiagnostics,
         KeyCode::Char('i') => Command::InputMode,
         KeyCode::Char('g') => Command::GoToUrl,
         KeyCode::Char('f') => Command::LinkHints,
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn normal_mode_toggles_the_in_terminal_diagnostics_overlay() {
         assert_eq!(
-            key_command(key(KeyCode::Char('D')), InputMode::Normal).expect("read key"),
+            key_command(key(KeyCode::Char('d')), InputMode::Normal).expect("read key"),
             Command::ToggleDiagnostics
         );
     }

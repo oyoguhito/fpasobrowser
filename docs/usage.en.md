@@ -69,7 +69,7 @@ For interactive browser diagnosis, `--debug` also shows an in-page
 Enter` identify requests sent to the embedded browser; the matching `RECV`
 line is its reply and `TIMEOUT` is an application-side wait expiry. Screenshot,
 tab-info, and verification queries are included. Use `--debug-overlay` when
-only this visible timeline is wanted, and press `D` in normal mode to toggle
+only this visible timeline is wanted, and press `d` or `D` in normal mode to toggle
 it.
 
 ## Windows native: source-build prerequisites

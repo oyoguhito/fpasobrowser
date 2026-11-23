@@ -57,6 +57,7 @@ impl UiChrome {
 pub struct Terminal {
     stdout: Stdout,
     chrome: UiChrome,
+    diagnostics_rows: u16,
 }
 
 impl Terminal {
@@ -70,7 +71,11 @@ impl Terminal {
             Hide,
             Clear(ClearType::All)
         )?;
-        Ok(Self { stdout, chrome })
+        Ok(Self {
+            stdout,
+            chrome,
+            diagnostics_rows: 0,
+        })
     }
 
     pub fn size(&self) -> Result<RenderSize> {
@@ -80,8 +85,27 @@ impl Terminal {
             // Full chrome keeps three lines outside the browser image:
             // activity/status, an in-viewer tab strip, and a stable mouse
             // toolbar. Compact chrome keeps only the activity line.
-            rows: rows.saturating_sub(self.chrome.reserved_rows()).max(1),
+            rows: rows
+                .saturating_sub(self.chrome.reserved_rows())
+                .saturating_sub(self.diagnostics_rows)
+                .max(1),
         })
+    }
+
+    /// Reserve physical terminal rows below the fpasobrowser controls for
+    /// text that must remain visible above an asynchronous Kitty/SIXEL image.
+    /// Shrinking the rendered page rather than writing over it makes the
+    /// developer timeline usable in fpasoterm and nested terminals.
+    pub fn set_diagnostics_rows(&mut self, rows: u16) {
+        self.diagnostics_rows = rows;
+    }
+
+    pub const fn diagnostics_rows(&self) -> u16 {
+        self.diagnostics_rows
+    }
+
+    pub fn diagnostics_start_row(&self, size: RenderSize) -> u16 {
+        size.rows.saturating_add(self.chrome.reserved_rows())
     }
 
     pub const fn has_tab_strip(&self) -> bool {

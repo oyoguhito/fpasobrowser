@@ -62,7 +62,7 @@ build済みbinaryも`fpasobrowser --doctor`に対応します。これはコピ�
 **FPASOBROWSER DEVTOOLS** のoperation timelineを表示します。`POST engine click`と
 `POST engine key Enter`はembedded browserへ送った要求、対応する`RECV`はreply、`TIMEOUT`は
 app側の待機切れです。screenshot、tab情報、verification queryも表示します。画面内timelineだけを
-有効にするには`--debug-overlay`を指定します。normal modeで`D`を押すと表示を切替できます。
+有効にするには`--debug-overlay`を指定します。normal modeで`d`または`D`を押すと表示を切替できます。
 
 ## Windows native: source buildの前提条件
 
