@@ -312,7 +312,7 @@ fn wait_for_run_error(
         SelectedBackend::from_choice_with_sixel_cell_pixels(backend_choice, sixel_cell_pixels);
     let size = terminal.size()?;
     let message = format!("browser error: {error:#}; press r to retry or q to quit");
-    draw_disconnected(&mut terminal, &renderer, size, &message)?;
+    draw_disconnected(&mut terminal, &renderer, size, &message, None)?;
     loop {
         match input::read_command(Duration::from_millis(100), InputMode::Normal)? {
             Command::Reload => {
@@ -518,19 +518,36 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                         message = format!(
                             "browser disconnected: {error:#}; press r to retry, q to quit and restart if stopped"
                         );
-                        draw_disconnected(&mut terminal, &renderer, size, &message)?;
+                        diagnostics.record(format!("RECV engine redraw error: {error:#}"));
+                        draw_disconnected(
+                            &mut terminal,
+                            &renderer,
+                            size,
+                            &message,
+                            Some(&diagnostics),
+                        )?;
                     }
                     Err(_) => {
                         browser_connected = false;
                         message = String::from(
                             "browser redraw timed out; press r to retry, q to quit and restart if stopped",
                         );
-                        draw_disconnected(&mut terminal, &renderer, size, &message)?;
+                        diagnostics.record(format!(
+                            "TIMEOUT engine redraw after {}ms",
+                            REDRAW_TIMEOUT.as_millis()
+                        ));
+                        draw_disconnected(
+                            &mut terminal,
+                            &renderer,
+                            size,
+                            &message,
+                            Some(&diagnostics),
+                        )?;
                     }
                 }
             } else {
                 presentation = None;
-                draw_disconnected(&mut terminal, &renderer, size, &message)?;
+                draw_disconnected(&mut terminal, &renderer, size, &message, Some(&diagnostics))?;
             }
             // A resumed engine must immediately render the fresh page. The
             // normal redraw path clears this flag, but a recovery requests
@@ -570,7 +587,8 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                 message = format!(
                     "terminal input temporarily unavailable: {error}; press r to retry, q to quit"
                 );
-                draw_disconnected(&mut terminal, &renderer, size, &message)?;
+                diagnostics.record(format!("RECV terminal input error: {error}"));
+                draw_disconnected(&mut terminal, &renderer, size, &message, Some(&diagnostics))?;
                 continue;
             }
         };
@@ -605,20 +623,29 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                         Err(error) => {
                             message =
                                 format!("recovery retry failed: {error}; press q and start fpasobrowser again if it stopped");
-                            draw_disconnected(&mut terminal, &renderer, size, &message)?;
+                            diagnostics.record(format!("RECV recovery error: {error:#}"));
+                            draw_disconnected(
+                                &mut terminal,
+                                &renderer,
+                                size,
+                                &message,
+                                Some(&diagnostics),
+                            )?;
                         }
                     }
                 }
                 Command::Help => {
+                    // Do not replace the failure text: after a disconnect a
+                    // mouse move or help key used to erase the only useful
+                    // error detail from both the status line and DEVTOOLS.
                     show_help = !show_help;
-                    message = if show_help {
-                        String::from(
-                            "browser disconnected; r retries current engine | q quit | ? hide help",
-                        )
-                    } else {
-                        String::from("browser disconnected; press r to retry, q to quit")
-                    };
-                    draw_disconnected(&mut terminal, &renderer, size, &message)?;
+                    draw_disconnected(
+                        &mut terminal,
+                        &renderer,
+                        size,
+                        &message,
+                        Some(&diagnostics),
+                    )?;
                 }
                 Command::OpenExternal | Command::OpenVerification => {
                     match open_in_regular_browser(state.url.as_str()) {
@@ -631,7 +658,13 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                             message = format!("open regular browser failed: {error}");
                         }
                     }
-                    draw_disconnected(&mut terminal, &renderer, size, &message)?;
+                    draw_disconnected(
+                        &mut terminal,
+                        &renderer,
+                        size,
+                        &message,
+                        Some(&diagnostics),
+                    )?;
                 }
                 Command::Click { column, row }
                     if terminal.has_toolbar() && row == toolbar_row(size) =>
@@ -655,14 +688,26 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                                     message = format!(
                                         "recovery retry failed: {error}; press q and start fpasobrowser again if it stopped"
                                     );
-                                    draw_disconnected(&mut terminal, &renderer, size, &message)?;
+                                    diagnostics.record(format!("RECV recovery error: {error:#}"));
+                                    draw_disconnected(
+                                        &mut terminal,
+                                        &renderer,
+                                        size,
+                                        &message,
+                                        Some(&diagnostics),
+                                    )?;
                                 }
                             }
                         }
                         Some(Command::Help) => {
                             show_help = !show_help;
-                            message = String::from("browser disconnected; press r to retry");
-                            draw_disconnected(&mut terminal, &renderer, size, &message)?;
+                            draw_disconnected(
+                                &mut terminal,
+                                &renderer,
+                                size,
+                                &message,
+                                Some(&diagnostics),
+                            )?;
                         }
                         Some(Command::OpenVerification) => {
                             match open_in_regular_browser(state.url.as_str()) {
@@ -675,18 +720,34 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                                     message = format!("open regular browser failed: {error}");
                                 }
                             }
-                            draw_disconnected(&mut terminal, &renderer, size, &message)?;
+                            draw_disconnected(
+                                &mut terminal,
+                                &renderer,
+                                size,
+                                &message,
+                                Some(&diagnostics),
+                            )?;
                         }
                         _ => {
-                            message = String::from("browser disconnected; press r to retry");
-                            draw_disconnected(&mut terminal, &renderer, size, &message)?;
+                            draw_disconnected(
+                                &mut terminal,
+                                &renderer,
+                                size,
+                                &message,
+                                Some(&diagnostics),
+                            )?;
                         }
                     }
                 }
                 Command::None => {}
                 _ => {
-                    message = String::from("browser disconnected; press r to retry, q to quit");
-                    draw_disconnected(&mut terminal, &renderer, size, &message)?;
+                    draw_disconnected(
+                        &mut terminal,
+                        &renderer,
+                        size,
+                        &message,
+                        Some(&diagnostics),
+                    )?;
                 }
             }
             continue;
@@ -1881,6 +1942,7 @@ fn draw_disconnected(
     renderer: &SelectedBackend,
     size: crate::render::RenderSize,
     message: &str,
+    diagnostics: Option<&OperationTrace>,
 ) -> Result<()> {
     // `clear` erases text cells only. Explicitly retire a Kitty/SIXEL image
     // too, otherwise the last live page remains visible behind the recovery
@@ -1914,6 +1976,9 @@ fn draw_disconnected(
             toolbar_row(size),
             &toolbar_text(size.columns, &TabInfo::default()),
         )?;
+    }
+    if let Some(diagnostics) = diagnostics {
+        draw_diagnostics_overlay(terminal, size, diagnostics)?;
     }
     terminal.flush()?;
     Ok(())
