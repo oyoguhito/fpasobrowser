@@ -258,6 +258,12 @@ struct EngineTab {
     webview: WebView,
     rendering_context: Rc<SoftwareRenderingContext>,
     signals: Arc<PageSignals>,
+    // A document swap can temporarily expose neither a readable software
+    // surface nor a completed Servo screenshot callback. Keep the preceding
+    // confirmed frame per tab so the terminal remains usable while the new
+    // document paints instead of treating that normal transition as a dead
+    // browser.
+    last_painted_frame: Option<DynamicImage>,
 }
 
 type PopupRequests = Rc<RefCell<Vec<EngineTab>>>;
@@ -323,6 +329,7 @@ impl WebViewDelegate for Delegate {
             webview,
             rendering_context,
             signals,
+            last_painted_frame: None,
         });
     }
 }
@@ -667,11 +674,12 @@ fn create_engine_tab(
     // though Servo has already emitted a frame-ready notification. A real
     // screenshot request drives WebRender through its completion callback;
     // `capture_frame` also retries an unpainted surface for a short interval.
-    let _ = capture_frame(servo, &webview, &rendering_context, viewport)?;
+    let first_painted_frame = capture_frame(servo, &webview, &rendering_context, viewport, None)?;
     Ok(EngineTab {
         webview,
         rendering_context,
         signals,
+        last_painted_frame: Some(first_painted_frame),
     })
 }
 
@@ -884,13 +892,8 @@ fn engine_loop(
                 }
             }
             Ok(EngineCommand::Screenshot(reply)) => {
-                let tab = &tabs[active];
-                let _ = reply.send(capture_frame(
-                    servo,
-                    &tab.webview,
-                    &tab.rendering_context,
-                    viewport,
-                ));
+                let tab = &mut tabs[active];
+                let _ = reply.send(capture_tab_frame(servo, tab, viewport));
             }
             Ok(EngineCommand::Scroll(delta_y, reply)) => {
                 let webview = &tabs[active].webview;
@@ -1124,9 +1127,13 @@ fn engine_loop(
             Ok(EngineCommand::Resize(new_viewport, reply)) => {
                 viewport = new_viewport;
                 let size = PhysicalSize::new(viewport.width, viewport.height);
-                for tab in &tabs {
+                for tab in &mut tabs {
                     let _ = tab.rendering_context.make_current();
                     tab.webview.resize(size);
+                    // A resized terminal needs a frame from the new surface;
+                    // retaining a prior viewport image would stretch stale
+                    // pixels into a different page/input geometry.
+                    tab.last_painted_frame = None;
                 }
                 let _ = tabs[active].rendering_context.make_current();
                 for _ in 0..3 {
@@ -1616,11 +1623,28 @@ fn manual_verification_required(servo: &Servo, webview: &WebView) -> Result<bool
     }
 }
 
+fn capture_tab_frame(
+    servo: &Servo,
+    tab: &mut EngineTab,
+    viewport: BrowserViewport,
+) -> Result<DynamicImage> {
+    let image = capture_frame(
+        servo,
+        &tab.webview,
+        &tab.rendering_context,
+        viewport,
+        tab.last_painted_frame.as_ref(),
+    )?;
+    tab.last_painted_frame = Some(image.clone());
+    Ok(image)
+}
+
 fn capture_frame(
     servo: &Servo,
     webview: &WebView,
     rendering_context: &SoftwareRenderingContext,
     viewport: BrowserViewport,
+    last_painted_frame: Option<&DynamicImage>,
 ) -> Result<DynamicImage> {
     // The active WebView may have changed after a popup, tab selection, or a
     // platform compositor callback. In particular, ANGLE requires its
@@ -1648,6 +1672,14 @@ fn capture_frame(
             if !is_probably_unpainted_surface(&image) {
                 return Ok(image);
             }
+        }
+        // Servo/WebRender can release the old software surface before Servo
+        // has published the first destination scene. This is a live navigation,
+        // not a disconnected browser: retain the prior tab frame and poll on
+        // the next loading redraw rather than waiting for an unavailable
+        // screenshot callback on the engine owner thread.
+        if let Some(image) = last_painted_frame {
+            return Ok(image.clone());
         }
     }
     // A direct read of SoftwareRenderingContext can return the previous
