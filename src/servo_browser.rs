@@ -932,30 +932,32 @@ fn engine_loop(
                     // its editing/default key actions on Windows.
                     let _focused_directly = before.editable
                         && focus_editable_at_point(servo, webview, point).unwrap_or(false);
-                    webview.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(
-                        point.into(),
-                    )));
-                    webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
-                        MouseButtonAction::Down,
-                        MouseButton::Primary,
-                        point.into(),
-                    )));
-                    webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
-                        MouseButtonAction::Up,
-                        MouseButton::Primary,
-                        point.into(),
-                    )));
-                    pump(servo, webview, 3);
-                    // Servo's offscreen input path can deliver pointer events
-                    // to an anchor without carrying out its default
-                    // navigation. The terminal has already identified the
-                    // resolved URL under the pointer, so load it explicitly
-                    // in the same WebView. This preserves native click
-                    // handlers while making ordinary links (for example
-                    // Google About/Store) reliably navigable.
-                    if let Some(href) = before.href.clone() {
+                    if let Some(href) = direct_anchor_navigation(&before) {
+                        // Servo's offscreen pointer path can either skip an
+                        // anchor default action or start it asynchronously.
+                        // Sending native Down/Up and then loading the same
+                        // URL races those two document swaps, which was the
+                        // cause of the Windows failure after clicking Google
+                        // About/Store. A plain, same-tab anchor is already
+                        // fully resolved by the inspection pass, so load it
+                        // once and avoid the duplicate native activation.
                         webview.load(href);
                         pump(servo, webview, 2);
+                    } else {
+                        webview.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(
+                            point.into(),
+                        )));
+                        webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
+                            MouseButtonAction::Down,
+                            MouseButton::Primary,
+                            point.into(),
+                        )));
+                        webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
+                            MouseButtonAction::Up,
+                            MouseButton::Primary,
+                            point.into(),
+                        )));
+                        pump(servo, webview, 3);
                     }
                     let navigation_in_flight = webview.load_status() != LoadStatus::Complete;
                     // Only controls that need keyboard ownership require a
@@ -1154,6 +1156,17 @@ struct InspectedTarget {
     suggestion: bool,
     tag: Option<String>,
     href: Option<Url>,
+    direct_anchor_navigation: bool,
+}
+
+// Use an explicit WebView load only for a plain same-tab anchor. Links with a
+// target, a download, or an inline handler retain Servo's native pointer path
+// so popup and page-specific semantics are preserved.
+fn direct_anchor_navigation(target: &InspectedTarget) -> Option<Url> {
+    target
+        .direct_anchor_navigation
+        .then(|| target.href.clone())
+        .flatten()
 }
 
 fn pump(servo: &Servo, webview: &WebView, steps: usize) {
@@ -1286,7 +1299,8 @@ fn inspect_click_target(
               anchor = anchor.parentElement;
             }}
             const href = anchor && anchor.href ? anchor.href : '';
-            return [editable ? '1' : '0', (nested || tag === 'iframe') ? '1' : '0', suggestion ? '1' : '0', tag, href].join('|');
+            const direct = anchor && href && !anchor.target && !anchor.hasAttribute('download') && !anchor.hasAttribute('onclick') ? '1' : '0';
+            return [editable ? '1' : '0', (nested || tag === 'iframe') ? '1' : '0', suggestion ? '1' : '0', tag, href, direct].join('|');
           }};
           return inspect(document, {:.3} / scale, {:.3} / scale, false);
         }})()"#,
@@ -1295,7 +1309,7 @@ fn inspect_click_target(
     let JSValue::String(value) = evaluate_javascript(servo, webview, &script)? else {
         return Ok(InspectedTarget::default());
     };
-    let mut fields = value.splitn(5, '|');
+    let mut fields = value.splitn(6, '|');
     let editable = fields.next() == Some("1");
     let iframe = fields.next() == Some("1");
     let suggestion = fields.next() == Some("1");
@@ -1307,20 +1321,22 @@ fn inspect_click_target(
         .next()
         .filter(|href| !href.is_empty())
         .and_then(|href| Url::parse(href).ok());
+    let direct_anchor_navigation = fields.next() == Some("1");
     Ok(InspectedTarget {
         editable,
         iframe,
         suggestion,
         tag,
         href,
+        direct_anchor_navigation,
     })
 }
 
 /// Focus a visible same-origin editable element located beneath a viewport
 /// point. This is deliberately narrow: it provides reliable terminal text
-/// entry for a confirmed editable control, while ordinary buttons and links
-/// continue through Servo's native click implementation. It does not inspect
-/// cross-origin frames.
+/// entry for a confirmed editable control. Plain same-tab links take the
+/// explicit single-load path; other buttons and links use Servo's native
+/// click implementation. It does not inspect cross-origin frames.
 fn focus_editable_at_point(
     servo: &Servo,
     webview: &WebView,
@@ -1436,6 +1452,7 @@ fn inspect_active_element(servo: &Servo, webview: &WebView) -> Result<InspectedT
         suggestion: false,
         tag,
         href: None,
+        direct_anchor_navigation: false,
     })
 }
 
@@ -1952,11 +1969,33 @@ fn terminal_cell_to_viewport_point(
 #[cfg(test)]
 mod tests {
     use super::{
-        browser_viewport, is_probably_unpainted_surface, terminal_cell_to_viewport_point,
-        BrowserViewport,
+        browser_viewport, direct_anchor_navigation, is_probably_unpainted_surface,
+        terminal_cell_to_viewport_point, BrowserViewport, InspectedTarget,
     };
     use crate::render::{RenderSize, TerminalCellPixels};
     use image::{DynamicImage, Rgba, RgbaImage};
+    use url::Url;
+
+    #[test]
+    fn direct_anchor_navigation_is_limited_to_plain_same_tab_links() {
+        let plain = InspectedTarget {
+            href: Some(Url::parse("https://about.google/").expect("valid URL")),
+            direct_anchor_navigation: true,
+            ..InspectedTarget::default()
+        };
+        assert_eq!(
+            direct_anchor_navigation(&plain).map(|url| url.to_string()),
+            Some(String::from("https://about.google/"))
+        );
+        assert_eq!(
+            direct_anchor_navigation(&InspectedTarget {
+                href: plain.href,
+                direct_anchor_navigation: false,
+                ..InspectedTarget::default()
+            }),
+            None
+        );
+    }
 
     #[test]
     fn click_coordinates_use_terminal_cell_centers() {
