@@ -161,6 +161,13 @@ pub struct ClickOutcome {
     pub active_tag: Option<String>,
     pub active_editable: bool,
     pub opened_popup_tabs: usize,
+    /// A plain anchor was loaded explicitly because Servo's offscreen pointer
+    /// path does not reliably perform its default navigation action.
+    ///
+    /// The terminal UI uses this as a redraw hint: on some Servo builds the
+    /// WebView returns `Complete` between document swaps even though the
+    /// destination software surface has not appeared yet.
+    pub navigation_started: bool,
 }
 
 /// Result of activating a numbered page hint.
@@ -935,7 +942,8 @@ fn engine_loop(
                     // its editing/default key actions on Windows.
                     let _focused_directly = before.editable
                         && focus_editable_at_point(servo, webview, point).unwrap_or(false);
-                    if let Some(href) = direct_anchor_navigation(&before) {
+                    let direct_navigation = direct_anchor_navigation(&before);
+                    if let Some(href) = direct_navigation.clone() {
                         // Servo's offscreen pointer path can either skip an
                         // anchor default action or start it asynchronously.
                         // Sending native Down/Up and then loading the same
@@ -1015,6 +1023,7 @@ fn engine_loop(
                     }
                     (before, focused)
                 };
+                let navigation_started = direct_anchor_navigation(&before).is_some();
                 let popup_result =
                     promote_popup_tabs(servo, &mut tabs, &mut active, &popup_requests);
                 let _ = reply.send(popup_result.map(|opened_popup_tabs| ClickOutcome {
@@ -1032,6 +1041,7 @@ fn engine_loop(
                     active_tag: focused.tag,
                     active_editable: focused.editable,
                     opened_popup_tabs,
+                    navigation_started,
                 }));
             }
             Ok(EngineCommand::Hover {
@@ -1130,10 +1140,10 @@ fn engine_loop(
                 for tab in &mut tabs {
                     let _ = tab.rendering_context.make_current();
                     tab.webview.resize(size);
-                    // A resized terminal needs a frame from the new surface;
-                    // retaining a prior viewport image would stretch stale
-                    // pixels into a different page/input geometry.
-                    tab.last_painted_frame = None;
+                    // Preserve the preceding visible frame until the resized
+                    // surface has painted. Rendering it at the new terminal
+                    // dimensions is preferable to treating this ordinary
+                    // transition as a disconnected browser.
                 }
                 let _ = tabs[active].rendering_context.make_current();
                 for _ in 0..3 {
@@ -1657,6 +1667,21 @@ fn capture_frame(
         DeviceIntPoint::zero(),
         DeviceIntPoint::new(viewport.width as i32, viewport.height as i32),
     );
+    // Once a tab has painted at least once, a read of the current software
+    // surface is the least disruptive way to notice its next frame.  Servo
+    // can report `Complete` while a cross-document swap has temporarily
+    // removed both that surface and the `take_screenshot` callback.  Keep the
+    // preceding frame visible in that narrow interval instead of blocking the
+    // serialized engine owner and escalating it to a browser disconnect.
+    if let Some(last_painted_frame) = last_painted_frame {
+        if let Some(image) = rendering_context.read_to_image(bounds) {
+            let image = DynamicImage::ImageRgba8(image);
+            if !is_probably_unpainted_surface(&image) {
+                return Ok(image);
+            }
+        }
+        return Ok(last_painted_frame.clone());
+    }
     // A form submission or link activation can leave the WebView in Loading
     // state for several seconds. `take_screenshot` may deliberately defer its
     // callback until that navigation has a new scene, which previously made

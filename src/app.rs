@@ -37,6 +37,11 @@ const SCROLL_REDRAW_DELAY: Duration = Duration::from_millis(180);
 // sampling frames until it reports completion rather than leaving an old page
 // visible after a fixed number of attempts.
 const LOADING_REDRAW_INTERVAL: Duration = Duration::from_millis(500);
+// Servo's offscreen WebView can briefly report `Complete` between an
+// explicitly requested link load and the destination's first software frame.
+// Keep probing through that gap even when its transient load state says ready.
+const DIRECT_NAVIGATION_REDRAW_INTERVAL: Duration = Duration::from_millis(500);
+const DIRECT_NAVIGATION_REDRAW_SAMPLES: u8 = 16;
 // SIXEL uses a complete image transfer for each changed frame.  Keep polling
 // while a navigation is pending so a click that first captured the old page is
 // eventually replaced by the destination, but sample less often than the
@@ -442,6 +447,7 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
         .unwrap_or_else(|| String::from(DEFAULT_ACTIVITY_MESSAGE));
     let mut loading_frame = 0_u8;
     let mut startup_redraws_remaining = STARTUP_REDRAW_SAMPLES;
+    let mut direct_navigation_redraws_remaining = 0_u8;
 
     loop {
         if pending_redraw_at.is_some_and(|deadline| Instant::now() >= deadline) {
@@ -503,7 +509,12 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                 .await;
                 match redraw_result {
                     Ok(Ok(outcome)) => {
-                        if startup_redraws_remaining > 0 {
+                        if direct_navigation_redraws_remaining > 0 {
+                            direct_navigation_redraws_remaining -= 1;
+                            loading_frame = loading_frame.wrapping_add(1);
+                            pending_redraw_at =
+                                Some(Instant::now() + DIRECT_NAVIGATION_REDRAW_INTERVAL);
+                        } else if startup_redraws_remaining > 0 {
                             startup_redraws_remaining -= 1;
                             pending_redraw_at = Some(Instant::now() + STARTUP_REDRAW_DELAY);
                         } else if outcome.is_loading {
@@ -1741,6 +1752,13 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                                     input_mode = InputMode::Normal;
                                     message = format!(
                                         "clicked {column},{row}{focus_detail}{popup_detail}"
+                                    );
+                                }
+                                if outcome.navigation_started {
+                                    direct_navigation_redraws_remaining =
+                                        DIRECT_NAVIGATION_REDRAW_SAMPLES;
+                                    message = format!(
+                                        "opening link; waiting for the destination frame{popup_detail}"
                                     );
                                 }
                             }
