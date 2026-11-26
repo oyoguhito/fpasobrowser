@@ -952,14 +952,15 @@ fn engine_loop(
                     if let Some(href) = direct_navigation.clone() {
                         // Servo's offscreen pointer path can either skip an
                         // anchor default action or start it asynchronously.
-                        // Sending native Down/Up and then loading the same
-                        // URL races those two document swaps, which was the
-                        // cause of the Windows failure after clicking Google
-                        // About/Store. A plain, same-tab anchor is already
-                        // fully resolved by the inspection pass, so load it
-                        // once and avoid the duplicate native activation.
+                        // Sending native Down/Up and then starting a second
+                        // navigation races those document swaps.  Conversely,
+                        // `WebView::load` can update the URL yet leave its
+                        // current software surface on the prior document on
+                        // Windows.  Use the DOM navigation path that a plain
+                        // same-tab anchor itself uses, once, without emitting
+                        // the duplicate native pointer sequence.
                         let frame_serial = tabs[active].signals.begin_navigation();
-                        webview.load(href);
+                        navigate_same_tab_anchor(webview, &href);
                         let _ = wait_for_frame_signal(
                             servo,
                             webview,
@@ -1204,6 +1205,27 @@ fn pump(servo: &Servo, webview: &WebView, steps: usize) {
         servo.spin_event_loop();
         webview.paint();
     }
+}
+
+/// Initiate a resolved ordinary-anchor navigation in the page's own browsing
+/// context. The callback is intentionally ignored: a successful navigation
+/// may discard the source document before Servo delivers that JavaScript
+/// completion callback.
+fn navigate_same_tab_anchor(webview: &WebView, href: &Url) {
+    let href = javascript_string_literal(href.as_str());
+    webview.evaluate_javascript(&format!("window.location.assign({href});"), |_| {});
+}
+
+/// Quote a parsed URL for the one small navigation script above. URLs cannot
+/// contain raw control characters, but quote the JavaScript-sensitive cases
+/// explicitly rather than relying on display/debug formatting.
+fn javascript_string_literal(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029");
+    format!("\"{escaped}\"")
 }
 
 /// Give an explicit same-tab link load a short opportunity to publish its
@@ -2062,7 +2084,8 @@ fn terminal_cell_to_viewport_point(
 mod tests {
     use super::{
         browser_viewport, direct_anchor_navigation, is_probably_unpainted_surface,
-        terminal_cell_to_viewport_point, BrowserViewport, InspectedTarget,
+        javascript_string_literal, terminal_cell_to_viewport_point, BrowserViewport,
+        InspectedTarget,
     };
     use crate::render::{RenderSize, TerminalCellPixels};
     use image::{DynamicImage, Rgba, RgbaImage};
@@ -2086,6 +2109,14 @@ mod tests {
                 ..InspectedTarget::default()
             }),
             None
+        );
+    }
+
+    #[test]
+    fn anchor_navigation_url_is_a_safe_javascript_string() {
+        assert_eq!(
+            javascript_string_literal("https://example.test/a\\b\"c\u{2028}d"),
+            "\"https://example.test/a\\\\b\\\"c\\u2028d\""
         );
     }
 
