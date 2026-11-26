@@ -1813,12 +1813,13 @@ fn capture_frame(
     bail!("timed out waiting for a Servo screenshot")
 }
 
-/// Return true for the white or transparent, uniform clear surface that an
-/// offscreen renderer can expose before it has painted its first document
-/// frame. Sampling avoids walking every pixel of a large screenshot on each
-/// regular redraw. A genuine mostly-white page normally includes text, rules,
-/// or controls at one of these points; even a fully blank white document only
-/// incurs the short startup retry before it is shown.
+/// Return true for a uniform clear surface that an offscreen renderer can
+/// expose before it has painted its first document frame.  Windows ANGLE has
+/// exhibited both white and opaque-black clears during a document swap.
+/// Sampling avoids walking every pixel of a large screenshot on each regular
+/// redraw. A genuine light or dark page normally includes text, rules, or
+/// controls at one of these points; even a fully blank page only incurs the
+/// short startup retry before it is shown.
 fn is_probably_unpainted_surface(image: &DynamicImage) -> bool {
     let width = image.width();
     let height = image.height();
@@ -1828,7 +1829,8 @@ fn is_probably_unpainted_surface(image: &DynamicImage) -> bool {
     let reference = image.get_pixel(0, 0);
     let transparent = reference[3] == 0;
     let nearly_white = reference[0] >= 250 && reference[1] >= 250 && reference[2] >= 250;
-    if !transparent && !nearly_white {
+    let nearly_black = reference[0] <= 5 && reference[1] <= 5 && reference[2] <= 5;
+    if !transparent && !nearly_white && !nearly_black {
         return false;
     }
     for y in [0, height / 4, height / 2, height.saturating_sub(1)] {
@@ -1838,7 +1840,11 @@ fn is_probably_unpainted_surface(image: &DynamicImage) -> bool {
                 if pixel[3] != 0 {
                     return false;
                 }
-            } else if pixel[3] == 0 || pixel[0] < 250 || pixel[1] < 250 || pixel[2] < 250 {
+            } else if nearly_white {
+                if pixel[3] == 0 || pixel[0] < 250 || pixel[1] < 250 || pixel[2] < 250 {
+                    return false;
+                }
+            } else if pixel[3] == 0 || pixel[0] > 5 || pixel[1] > 5 || pixel[2] > 5 {
                 return false;
             }
         }
@@ -2182,7 +2188,7 @@ mod tests {
     }
 
     #[test]
-    fn white_clear_surface_is_retried_but_document_content_is_not() {
+    fn uniform_clear_surfaces_are_retried_but_document_content_is_not() {
         let white =
             DynamicImage::ImageRgba8(RgbaImage::from_pixel(8, 8, Rgba([255, 255, 255, 255])));
         assert!(is_probably_unpainted_surface(&white));
@@ -2190,10 +2196,19 @@ mod tests {
         let transparent = DynamicImage::ImageRgba8(RgbaImage::from_pixel(8, 8, Rgba([0, 0, 0, 0])));
         assert!(is_probably_unpainted_surface(&transparent));
 
+        let black = DynamicImage::ImageRgba8(RgbaImage::from_pixel(8, 8, Rgba([0, 0, 0, 255])));
+        assert!(is_probably_unpainted_surface(&black));
+
         let mut page = RgbaImage::from_pixel(8, 8, Rgba([255, 255, 255, 255]));
         page.put_pixel(4, 4, Rgba([20, 40, 60, 255]));
         assert!(!is_probably_unpainted_surface(&DynamicImage::ImageRgba8(
             page
+        )));
+
+        let mut dark_page = RgbaImage::from_pixel(8, 8, Rgba([0, 0, 0, 255]));
+        dark_page.put_pixel(4, 4, Rgba([20, 40, 60, 255]));
+        assert!(!is_probably_unpainted_surface(&DynamicImage::ImageRgba8(
+            dark_page
         )));
     }
 }
