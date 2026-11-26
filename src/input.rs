@@ -4,6 +4,44 @@ use crossterm::event::{
 };
 use std::time::Duration;
 
+/// One-shot browser modifier buttons exposed by the terminal toolbar.
+///
+/// The terminal itself may consume physical modifier chords before they reach
+/// the embedded WebView. Keeping this state in the viewer lets a user arm the
+/// modifier with a mouse click, then send it with exactly the next page key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowserModifier {
+    Control,
+    Alt,
+    Meta,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BrowserModifiers {
+    pub control: bool,
+    pub alt: bool,
+    pub meta: bool,
+}
+
+impl BrowserModifiers {
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        !self.control && !self.alt && !self.meta
+    }
+
+    pub fn toggle(&mut self, modifier: BrowserModifier) {
+        match modifier {
+            BrowserModifier::Control => self.control = !self.control,
+            BrowserModifier::Alt => self.alt = !self.alt,
+            BrowserModifier::Meta => self.meta = !self.meta,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Quit,
@@ -23,6 +61,10 @@ pub enum Command {
     ScrollUp,
     OpenExternal,
     OpenVerification,
+    ToggleBrowserModifier(BrowserModifier),
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
     BrowserKey(&'static str),
     BrowserText(char),
     Click {
@@ -185,7 +227,9 @@ fn key_command(key: KeyEvent, mode: InputMode) -> Result<Command> {
 
 #[cfg(test)]
 mod tests {
-    use super::{key_command, mouse_command, Command, InputMode};
+    use super::{
+        key_command, mouse_command, BrowserModifier, BrowserModifiers, Command, InputMode,
+    };
     use crossterm::event::{
         KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
@@ -309,5 +353,19 @@ mod tests {
             mouse_command(mouse(MouseEventKind::Up(MouseButton::Left))),
             Command::MousePrimaryUp { column: 12, row: 7 }
         );
+    }
+
+    #[test]
+    fn browser_modifiers_are_one_shot_toggle_state() {
+        let mut modifiers = BrowserModifiers::default();
+        assert!(modifiers.is_empty());
+        modifiers.toggle(BrowserModifier::Control);
+        modifiers.toggle(BrowserModifier::Meta);
+        assert!(modifiers.control);
+        assert!(modifiers.meta);
+        modifiers.toggle(BrowserModifier::Control);
+        assert!(!modifiers.control);
+        modifiers.clear();
+        assert!(modifiers.is_empty());
     }
 }

@@ -94,6 +94,18 @@ source buildの前に、launcherの診断を実行できます。
 .\fpasobrowser.cmd --backend half-block --debug
 ```
 
+`half-block`はterminal cellへの縮小前に過大なsource surfaceを作らないよう、既定で
+`640x360`の軽量viewportを使用します（従来の`960x540`より約56%少ないpixelです）。
+このため、memoryに余裕が少ないhostでfpasoterm/RDPと同時に使用する際のServo・ANSI変換・
+terminal転送の負荷を抑えます。画像protocol backendと明示的な`--viewport`はこの軽量化の
+対象外です。さらに画面下のtoolbarの`[-]` / `[+]` / `[100]`で、page zoomを80–150%の
+範囲で変更・resetできます。
+
+`[Ctrl]`、`[Alt]`、`[Meta]`はnoVNCのmodifier buttonと同じく、次のpage keyだけに
+modifierを付けます。RDPやterminalがphysical chordを横取りする場合でも、buttonをclickして
+からpage内で`c`等のkeyを押すことで`Ctrl+C`等を送れます。armed stateは次のkey送信、zoom操作、
+または同じbuttonの再clickで解除されます。
+
 Kitty Graphics Protocolが使えるKitty、またはgraphics bridgeをadvertiseするfpasotermでは、
 引数なしの`auto`が`kitty`を選びます。Windows版fpasotermではConPTYがKittyのAPCを
 破棄するため、current fpasotermがchild processへ通知する`osc-v1` bridgeを使います。

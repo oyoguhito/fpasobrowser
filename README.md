@@ -351,7 +351,11 @@ Controls:
   title, and current URL. The middle line is
   a visible in-viewer tab strip; the
   bottom line starts with a mouse toolbar:
-  `[B] [F] [R] [URL] [+Tab] [<Tab] [Tab>] [V] [?]`. History controls are shown
+  `[B] [F] [R] [URL] [Ctrl] [Alt] [Meta] [-] [+] [100] [+Tab] [<Tab] [Tab>] [V] [?]`.
+  Click `[Ctrl]`, `[Alt]`, and/or `[Meta]` to arm those modifiers for exactly
+  the next page key; this works through RDP or terminals that consume physical
+  key chords. `[-]`, `[+]`, and `[100]` change/reset page zoom (80–150%).
+  History controls are shown
   as `(B)` / `(F)` when the active tab has no backward / forward entry, and as
   `[B]` / `[F]` when the corresponding action is available.
   After a click, form submission, or link-hint activation, fpasobrowser keeps
@@ -365,8 +369,8 @@ Controls:
   same terminal pane. `Ctrl+Tab` / `Ctrl+Shift+Tab` are also supported when
   the terminal reports them. Click a tab's explicit `×` mark (or press `x`) to
   close it; the final tab is kept open. Click toolbar buttons for back,
-  forward, reload, URL entry, new-tab creation, verification handoff, and
-  help.
+  forward, reload, URL entry, page modifiers/zoom, new-tab creation,
+  verification handoff, and help.
   Use `--ui compact` (or `FPASOBROWSER_UI=compact`) when page height matters:
   it reserves only the activity/status line. Keyboard tab and navigation
   commands remain available, while the clickable tab strip and toolbar are

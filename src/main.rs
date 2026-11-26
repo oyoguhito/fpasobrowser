@@ -242,6 +242,7 @@ async fn run(cli: Cli) -> Result<()> {
             debug: cli.debug,
             viewport: cli.viewport,
             terminal_cell_pixels: None,
+            low_resource_viewport: false,
         },
         dump_screenshot: cli.dump_screenshot,
         capture_only: cli.capture_only,

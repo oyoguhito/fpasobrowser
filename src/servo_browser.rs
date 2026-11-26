@@ -4,7 +4,10 @@
 //! The terminal/Tokio side therefore sends requests to this owner thread and
 //! receives images or completion notifications over ordinary channels.
 
-use crate::render::{RenderSize, TerminalCellPixels};
+use crate::{
+    input::BrowserModifiers,
+    render::{RenderSize, TerminalCellPixels},
+};
 use anyhow::{bail, Context, Result};
 use dpi::PhysicalSize;
 use embedder_traits::{EventLoopWaker, LoadStatus};
@@ -33,6 +36,10 @@ use url::Url;
 
 const DEFAULT_BROWSER_VIEWPORT_WIDTH: u32 = 960;
 const DEFAULT_BROWSER_VIEWPORT_HEIGHT: u32 = 540;
+const LOW_RESOURCE_BROWSER_VIEWPORT_WIDTH: u32 = 640;
+const LOW_RESOURCE_BROWSER_VIEWPORT_HEIGHT: u32 = 360;
+const MIN_BROWSER_ZOOM_PERCENT: u16 = 80;
+const MAX_BROWSER_ZOOM_PERCENT: u16 = 150;
 const ENGINE_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 const FRAME_WAIT_STEPS: usize = 600;
 const FRAME_WAIT_INTERVAL: Duration = Duration::from_millis(16);
@@ -68,6 +75,9 @@ pub struct BrowserClient {
     engine: EngineHandle,
     fixed_viewport: bool,
     terminal_cell_pixels: Option<TerminalCellPixels>,
+    low_resource_viewport: bool,
+    base_viewport: Mutex<BrowserViewport>,
+    zoom_percent: Mutex<u16>,
 }
 
 struct EngineHandle {
@@ -137,6 +147,10 @@ pub struct BrowserOptions {
     /// Physical terminal-cell pixels required by the selected renderer. This
     /// is unset for renderers that do not control an image raster directly.
     pub terminal_cell_pixels: Option<TerminalCellPixels>,
+    /// Use a smaller source surface when output is reduced to terminal cells.
+    /// This lowers Servo/WebRender memory and raster work without reducing the
+    /// terminal grid's final resolution.
+    pub low_resource_viewport: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,7 +270,7 @@ enum EngineCommand {
         reply: Sender<Result<HoverOutcome>>,
     },
     TypeText(String, Sender<Result<()>>),
-    Key(String, Sender<Result<()>>),
+    Key(String, BrowserModifiers, Sender<Result<()>>),
     FocusFirstEditable(Sender<Result<bool>>),
     BlurActiveElement(Sender<Result<()>>),
     ShowLinkHints(Sender<Result<usize>>),
@@ -358,7 +372,12 @@ impl BrowserClient {
         options: BrowserOptions,
         initial_url: Url,
     ) -> Result<Self> {
-        let viewport = browser_viewport(size, options.viewport, options.terminal_cell_pixels);
+        let viewport = browser_viewport(
+            size,
+            options.viewport,
+            options.terminal_cell_pixels,
+            options.low_resource_viewport,
+        );
         let (sender, receiver) = mpsc::channel();
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
         let debug = options.debug;
@@ -393,6 +412,9 @@ impl BrowserClient {
                 },
                 fixed_viewport: options.viewport.is_some(),
                 terminal_cell_pixels: options.terminal_cell_pixels,
+                low_resource_viewport: options.low_resource_viewport,
+                base_viewport: Mutex::new(viewport),
+                zoom_percent: Mutex::new(100),
             })
         })
         .await?
@@ -486,9 +508,13 @@ impl BrowserClient {
             .await
     }
 
-    pub async fn press_key_with_fallback(&self, key: &'static str) -> Result<()> {
+    pub async fn press_key_with_modifiers(
+        &self,
+        key: String,
+        modifiers: BrowserModifiers,
+    ) -> Result<()> {
         self.engine
-            .request_unit(move |reply| EngineCommand::Key(key.to_owned(), reply))
+            .request_unit(move |reply| EngineCommand::Key(key, modifiers, reply))
             .await
     }
 
@@ -538,10 +564,55 @@ impl BrowserClient {
         if self.fixed_viewport {
             return Ok(());
         }
-        let viewport = browser_viewport(size, None, self.terminal_cell_pixels);
+        let viewport = self.viewport_for_size(size)?;
         self.engine
             .request_unit(move |reply| EngineCommand::Resize(viewport, reply))
             .await
+    }
+
+    pub async fn set_zoom(&self, size: RenderSize, requested_percent: u16) -> Result<u16> {
+        let percent = requested_percent.clamp(MIN_BROWSER_ZOOM_PERCENT, MAX_BROWSER_ZOOM_PERCENT);
+        let previous = {
+            let mut zoom = self
+                .zoom_percent
+                .lock()
+                .map_err(|_| anyhow::anyhow!("browser zoom state is unavailable"))?;
+            let previous = *zoom;
+            *zoom = percent;
+            previous
+        };
+        let viewport = self.viewport_for_size(size)?;
+        if let Err(error) = self
+            .engine
+            .request_unit(move |reply| EngineCommand::Resize(viewport, reply))
+            .await
+        {
+            if let Ok(mut zoom) = self.zoom_percent.lock() {
+                *zoom = previous;
+            }
+            return Err(error);
+        }
+        Ok(percent)
+    }
+
+    fn viewport_for_size(&self, size: RenderSize) -> Result<BrowserViewport> {
+        let mut base = self
+            .base_viewport
+            .lock()
+            .map_err(|_| anyhow::anyhow!("browser viewport state is unavailable"))?;
+        if !self.fixed_viewport {
+            *base = browser_viewport(
+                size,
+                None,
+                self.terminal_cell_pixels,
+                self.low_resource_viewport,
+            );
+        }
+        let zoom = *self
+            .zoom_percent
+            .lock()
+            .map_err(|_| anyhow::anyhow!("browser zoom state is unavailable"))?;
+        Ok(scale_browser_viewport(*base, zoom))
     }
 }
 
@@ -1077,22 +1148,24 @@ fn engine_loop(
                 pump(servo, webview, 2);
                 let _ = reply.send(Ok(()));
             }
-            Ok(EngineCommand::Key(key, reply)) => {
+            Ok(EngineCommand::Key(key, modifiers, reply)) => {
                 let webview = &tabs[active].webview;
                 // Servo 0.7's offscreen embedder does not provide a native
                 // select-popup surface.  Choosing with an arrow key must
                 // therefore update a focused HTMLSelectElement directly;
                 // otherwise ArrowUp/ArrowDown falls through to page scrolling
                 // and the terminal appears to have stopped responding.
-                if let Some(direction) = select_option_direction(&key) {
-                    if advance_focused_select(servo, webview, direction).unwrap_or(false) {
-                        pump(servo, webview, 2);
-                        let _ = refresh_focus_indicator(servo, webview);
-                        let _ = reply.send(Ok(()));
-                        continue;
+                if modifiers.is_empty() {
+                    if let Some(direction) = select_option_direction(&key) {
+                        if advance_focused_select(servo, webview, direction).unwrap_or(false) {
+                            pump(servo, webview, 2);
+                            let _ = refresh_focus_indicator(servo, webview);
+                            let _ = reply.send(Ok(()));
+                            continue;
+                        }
                     }
                 }
-                send_key(webview, &key);
+                send_key(webview, &key, modifiers);
                 pump(servo, webview, 2);
                 if key == "Enter" && webview.load_status() == LoadStatus::Complete {
                     // Native Enter is always sent first. Servo's offscreen
@@ -1297,7 +1370,7 @@ fn focus_first_editable(servo: &Servo, webview: &WebView) -> Result<bool> {
     // disconnected Servo on some same-origin iframe pages. Use native Tab as
     // the narrow fallback: it reaches the child control without page-script
     // access to any iframe, including a cross-origin CAPTCHA frame.
-    send_key(webview, "Tab");
+    send_key(webview, "Tab", BrowserModifiers::default());
     pump(servo, webview, 2);
     let focused = inspect_active_element(servo, webview)?;
     // The parent document can only observe the iframe element while Servo owns
@@ -1724,21 +1797,6 @@ fn capture_frame(
         DeviceIntPoint::zero(),
         DeviceIntPoint::new(viewport.width as i32, viewport.height as i32),
     );
-    // Once a tab has painted at least once, a read of the current software
-    // surface is the least disruptive way to notice its next frame.  Servo
-    // can report `Complete` while a cross-document swap has temporarily
-    // removed both that surface and the `take_screenshot` callback.  Keep the
-    // preceding frame visible in that narrow interval instead of blocking the
-    // serialized engine owner and escalating it to a browser disconnect.
-    if let Some(last_painted_frame) = last_painted_frame {
-        if let Some(image) = rendering_context.read_to_image(bounds) {
-            let image = DynamicImage::ImageRgba8(image);
-            if !is_probably_unpainted_surface(&image) {
-                return Ok(image);
-            }
-        }
-        return Ok(last_painted_frame.clone());
-    }
     // A form submission or link activation can leave the WebView in Loading
     // state for several seconds. `take_screenshot` may deliberately defer its
     // callback until that navigation has a new scene, which previously made
@@ -1746,6 +1804,14 @@ fn capture_frame(
     // navigation as a disconnected browser. Present the last painted frame
     // while loading instead; the app polls again until Servo reports Complete.
     if webview.load_status() != LoadStatus::Complete {
+        // A confirmed frame is safer than a direct software-surface read on
+        // Windows: ANGLE can expose a non-uniform texture belonging to a
+        // prior document or desktop. Never promote that unverified texture
+        // into `last_painted_frame`, or it can outlive the navigation that
+        // exposed it.
+        if let Some(image) = last_painted_frame {
+            return Ok(image.clone());
+        }
         if let Some(image) = rendering_context.read_to_image(bounds) {
             let image = DynamicImage::ImageRgba8(image);
             // Do not present an untouched ANGLE/SoftwareRenderingContext
@@ -1754,14 +1820,6 @@ fn capture_frame(
             if !is_probably_unpainted_surface(&image) {
                 return Ok(image);
             }
-        }
-        // Servo/WebRender can release the old software surface before Servo
-        // has published the first destination scene. This is a live navigation,
-        // not a disconnected browser: retain the prior tab frame and poll on
-        // the next loading redraw rather than waiting for an unavailable
-        // screenshot callback on the engine owner thread.
-        if let Some(image) = last_painted_frame {
-            return Ok(image.clone());
         }
     }
     // A direct read of SoftwareRenderingContext can return the previous
@@ -1792,11 +1850,20 @@ fn capture_frame(
             thread::sleep(FRAME_WAIT_INTERVAL);
         }
         if !received_screenshot {
-            // The current software surface is valid even when Servo has
-            // deferred `take_screenshot` during a document transition. A
-            // real, painted frame is preferable to declaring a live engine
-            // disconnected; the next redraw can obtain the authoritative
-            // callback once the page settles.
+            // SoftwareRenderingContext::read_to_image() is useful while a
+            // live navigation has temporarily deferred Servo's screenshot
+            // callback. After a Windows ANGLE/WebView document has completed,
+            // however, that read can still contain non-uniform pixels from an
+            // earlier desktop surface. Prefer the last frame confirmed by
+            // Servo's callback in that case; otherwise fpasobrowser can show
+            // a previous application even though TabInfo reports the new URL.
+            if let Some(image) = last_painted_frame {
+                return Ok(image.clone());
+            }
+            // The first document has no confirmed predecessor. Retain the
+            // software-surface fallback only for that startup case so a
+            // callback bug does not turn a usable initial page into a fatal
+            // launch error.
             if let Some(image) = rendering_context.read_to_image(bounds) {
                 let image = DynamicImage::ImageRgba8(image);
                 if !is_probably_unpainted_surface(&image) {
@@ -1898,37 +1965,46 @@ fn wait_for_navigation_frame(
     )
 }
 
-fn send_key(webview: &WebView, key: &str) {
+fn send_key(webview: &WebView, key: &str, browser_modifiers: BrowserModifiers) {
+    let mut modifiers = Modifiers::empty();
+    if browser_modifiers.control {
+        modifiers.insert(Modifiers::CONTROL);
+    }
+    if browser_modifiers.alt {
+        modifiers.insert(Modifiers::ALT);
+    }
+    if browser_modifiers.meta {
+        modifiers.insert(Modifiers::META);
+    }
     let (named, code, modifiers) = match key {
-        "Enter" => (Some(NamedKey::Enter), Code::Enter, Modifiers::empty()),
-        "Tab" => (Some(NamedKey::Tab), Code::Tab, Modifiers::empty()),
-        "Shift+Tab" => (Some(NamedKey::Tab), Code::Tab, Modifiers::SHIFT),
-        "Backspace" => (
-            Some(NamedKey::Backspace),
-            Code::Backspace,
-            Modifiers::empty(),
-        ),
-        "Delete" => (Some(NamedKey::Delete), Code::Delete, Modifiers::empty()),
-        "ArrowLeft" => (
-            Some(NamedKey::ArrowLeft),
-            Code::ArrowLeft,
-            Modifiers::empty(),
-        ),
-        "ArrowRight" => (
-            Some(NamedKey::ArrowRight),
-            Code::ArrowRight,
-            Modifiers::empty(),
-        ),
-        "ArrowUp" => (Some(NamedKey::ArrowUp), Code::ArrowUp, Modifiers::empty()),
-        "ArrowDown" => (
-            Some(NamedKey::ArrowDown),
-            Code::ArrowDown,
-            Modifiers::empty(),
-        ),
-        _ => (None, Code::Unidentified, Modifiers::empty()),
+        "Enter" => (Some(NamedKey::Enter), Code::Enter, modifiers),
+        "Tab" => (Some(NamedKey::Tab), Code::Tab, modifiers),
+        "Shift+Tab" => (Some(NamedKey::Tab), Code::Tab, modifiers | Modifiers::SHIFT),
+        "Backspace" => (Some(NamedKey::Backspace), Code::Backspace, modifiers),
+        "Delete" => (Some(NamedKey::Delete), Code::Delete, modifiers),
+        "ArrowLeft" => (Some(NamedKey::ArrowLeft), Code::ArrowLeft, modifiers),
+        "ArrowRight" => (Some(NamedKey::ArrowRight), Code::ArrowRight, modifiers),
+        "ArrowUp" => (Some(NamedKey::ArrowUp), Code::ArrowUp, modifiers),
+        "ArrowDown" => (Some(NamedKey::ArrowDown), Code::ArrowDown, modifiers),
+        _ => (None, Code::Unidentified, modifiers),
     };
     if let Some(named) = named {
         let key = Key::Named(named);
+        let event = |state, key| {
+            KeyboardEvent::new_without_event(
+                state,
+                key,
+                code,
+                Location::Standard,
+                modifiers,
+                false,
+                false,
+            )
+        };
+        webview.notify_input_event(InputEvent::Keyboard(event(KeyState::Down, key.clone())));
+        webview.notify_input_event(InputEvent::Keyboard(event(KeyState::Up, key)));
+    } else if key.chars().count() == 1 {
+        let key = Key::Character(key.into());
         let event = |state, key| {
             KeyboardEvent::new_without_event(
                 state,
@@ -2055,6 +2131,7 @@ fn browser_viewport(
     size: RenderSize,
     explicit: Option<BrowserViewport>,
     terminal_cell_pixels: Option<TerminalCellPixels>,
+    low_resource_viewport: bool,
 ) -> BrowserViewport {
     if let Some(viewport) = explicit {
         return viewport;
@@ -2068,9 +2145,26 @@ fn browser_viewport(
             height: u32::from(size.rows.max(1)) * pixels.height,
         };
     }
+    if low_resource_viewport {
+        return BrowserViewport {
+            width: LOW_RESOURCE_BROWSER_VIEWPORT_WIDTH,
+            height: LOW_RESOURCE_BROWSER_VIEWPORT_HEIGHT,
+        };
+    }
     BrowserViewport {
         width: size.image_width().max(DEFAULT_BROWSER_VIEWPORT_WIDTH),
         height: size.image_height().max(DEFAULT_BROWSER_VIEWPORT_HEIGHT),
+    }
+}
+
+fn scale_browser_viewport(viewport: BrowserViewport, zoom_percent: u16) -> BrowserViewport {
+    let zoom = u32::from(zoom_percent.clamp(MIN_BROWSER_ZOOM_PERCENT, MAX_BROWSER_ZOOM_PERCENT));
+    BrowserViewport {
+        // Rendering fewer CSS pixels into the fixed terminal image makes the
+        // page larger.  Preserve a usable lower bound so zoom does not create
+        // a zero-sized Servo surface on a tiny terminal.
+        width: (viewport.width.saturating_mul(100) / zoom).max(160),
+        height: (viewport.height.saturating_mul(100) / zoom).max(90),
     }
 }
 
@@ -2090,8 +2184,8 @@ fn terminal_cell_to_viewport_point(
 mod tests {
     use super::{
         browser_viewport, direct_anchor_navigation, is_probably_unpainted_surface,
-        javascript_string_literal, terminal_cell_to_viewport_point, BrowserViewport,
-        InspectedTarget,
+        javascript_string_literal, scale_browser_viewport, terminal_cell_to_viewport_point,
+        BrowserViewport, InspectedTarget,
     };
     use crate::render::{RenderSize, TerminalCellPixels};
     use image::{DynamicImage, Rgba, RgbaImage};
@@ -2156,6 +2250,7 @@ mod tests {
                 width: 8,
                 height: 17,
             }),
+            false,
         );
         assert_eq!(
             viewport,
@@ -2179,10 +2274,38 @@ mod tests {
                     width: 8,
                     height: 17,
                 }),
+                false,
             ),
             BrowserViewport {
                 width: 640,
                 height: 408,
+            }
+        );
+    }
+
+    #[test]
+    fn low_resource_viewport_and_zoom_reduce_the_offscreen_surface() {
+        let viewport = browser_viewport(
+            RenderSize {
+                columns: 135,
+                rows: 45,
+            },
+            None,
+            None,
+            true,
+        );
+        assert_eq!(
+            viewport,
+            BrowserViewport {
+                width: 640,
+                height: 360,
+            }
+        );
+        assert_eq!(
+            scale_browser_viewport(viewport, 125),
+            BrowserViewport {
+                width: 512,
+                height: 288,
             }
         );
     }

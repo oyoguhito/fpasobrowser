@@ -2,7 +2,7 @@ use crate::{
     browser::{
         BrowserClient, BrowserOptions, CloseTabOutcome, LinkHintOutcome, PageState, TabInfo,
     },
-    input::{self, Command, InputMode},
+    input::{self, BrowserModifier, BrowserModifiers, Command, InputMode},
     render::{BackendChoice, RenderBackend, SelectedBackend, TerminalCellPixels},
     terminal::{Terminal, UiChrome},
     version_info,
@@ -86,6 +86,12 @@ const TOOLBAR_BUTTONS: &[(&str, &str)] = &[
     ("[F]", "forward"),
     ("[R]", "reload"),
     ("[URL]", "url"),
+    ("[Ctrl]", "arm Ctrl for the next page key"),
+    ("[Alt]", "arm Alt for the next page key"),
+    ("[Meta]", "arm Command/Windows for the next page key"),
+    ("[-]", "zoom out"),
+    ("[+]", "zoom in"),
+    ("[100]", "reset zoom"),
     ("[+Tab]", "new tab"),
     ("[<Tab]", "previous tab"),
     ("[Tab>]", "next tab"),
@@ -93,7 +99,7 @@ const TOOLBAR_BUTTONS: &[(&str, &str)] = &[
     ("[?]", "help"),
 ];
 const DEFAULT_ACTIVITY_MESSAGE: &str =
-    "?:help i:input g/t:URL [/] back/forward {/} tabs D:diagnostics click/wheel";
+    "?:help i:input g/t:URL [/] back/forward Ctrl/Alt/Meta toolbar arms next key +/- zoom";
 const DIAGNOSTIC_HISTORY_LIMIT: usize = 24;
 const DIAGNOSTIC_OVERLAY_ROWS: u16 = 10;
 
@@ -118,6 +124,8 @@ pub struct AppOptions {
 
 struct RedrawOptions<'a> {
     input_mode: InputMode,
+    armed_modifiers: BrowserModifiers,
+    zoom_percent: u16,
     message: &'a str,
     show_help: bool,
     debug: bool,
@@ -392,6 +400,11 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
     terminal.flush()?;
     let mut browser_options = options.browser.clone();
     browser_options.terminal_cell_pixels = renderer.terminal_cell_pixels();
+    // Half-block is already reduced to one foreground/background pair per
+    // terminal cell. Rendering a 960×540 browser surface before that reduction
+    // consumes memory and CPU without adding visible detail, which is
+    // especially costly inside fpasoterm/RDP on a low-memory host.
+    browser_options.low_resource_viewport = renderer.name() == "half-block";
     let mut diagnostics = OperationTrace::default();
     diagnostics.record(format!(
         "UI backend={} transport={} pane={}x{}",
@@ -430,6 +443,8 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
     let mut pending_redraw_at: Option<Instant> = None;
     let mut redraw_burst_remaining = 0_u8;
     let mut input_mode = InputMode::Normal;
+    let mut armed_modifiers = BrowserModifiers::default();
+    let mut zoom_percent = 100_u16;
     let mut suppress_initial_input_key_until: Option<Instant> = None;
     let mut show_help = false;
     let mut browser_connected = true;
@@ -496,6 +511,8 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                         &mut presentation,
                         RedrawOptions {
                             input_mode,
+                            armed_modifiers,
+                            zoom_percent,
                             message: &message,
                             show_help,
                             debug: browser_options.debug,
@@ -1071,6 +1088,8 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                             &mut presentation,
                             RedrawOptions {
                                 input_mode,
+                                armed_modifiers,
+                                zoom_percent,
                                 message: &hint_message,
                                 show_help,
                                 debug: browser_options.debug,
@@ -1238,20 +1257,72 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                 terminal.flush()?;
                 needs_redraw = true;
             }
+            Command::ToggleBrowserModifier(modifier) => {
+                armed_modifiers.toggle(modifier);
+                let label = match modifier {
+                    BrowserModifier::Control => "Ctrl",
+                    BrowserModifier::Alt => "Alt",
+                    BrowserModifier::Meta => "Command / Windows",
+                };
+                message = if armed_modifiers.is_empty() {
+                    format!("{label} modifier cancelled")
+                } else {
+                    // Mouse modifier buttons are useful precisely when the
+                    // terminal/RDP path eats a physical chord. Route the next
+                    // printable key through the page as well as named keys.
+                    input_mode = InputMode::BrowserInput;
+                    format!("{label} modifier armed for the next page key")
+                };
+                needs_redraw = true;
+            }
+            zoom_command @ (Command::ZoomIn | Command::ZoomOut | Command::ZoomReset) => {
+                let requested = match zoom_command {
+                    Command::ZoomIn => zoom_percent.saturating_add(10),
+                    Command::ZoomOut => zoom_percent.saturating_sub(10),
+                    Command::ZoomReset => 100,
+                    _ => unreachable!("zoom command was matched above"),
+                };
+                show_working(&mut terminal, size, "resizing page zoom")?;
+                match timeout(Duration::from_secs(2), browser.set_zoom(size, requested)).await {
+                    Ok(Ok(actual)) => {
+                        zoom_percent = actual;
+                        armed_modifiers.clear();
+                        presentation = None;
+                        message = format!("page zoom: {zoom_percent}%");
+                        needs_redraw = true;
+                    }
+                    Ok(Err(error)) => {
+                        message = format!("page zoom failed: {error}");
+                        terminal.status(size.rows, &message)?;
+                        terminal.flush()?;
+                    }
+                    Err(_) => {
+                        message = String::from("page zoom timed out; press r to recover");
+                        terminal.status(size.rows, &message)?;
+                        terminal.flush()?;
+                    }
+                }
+            }
             Command::BrowserKey(key) => {
+                let modifiers = std::mem::take(&mut armed_modifiers);
+                let modifier_label = browser_modifier_label(modifiers);
                 show_working(&mut terminal, size, &format!("sending key {key}"))?;
-                diagnostics.record(format!("POST engine key {key}"));
+                diagnostics.record(format!("POST engine key {modifier_label}{key}"));
                 let key_timeout = if key == "Enter" {
                     PAGE_ACTIVATION_TIMEOUT
                 } else {
                     Duration::from_millis(1_200)
                 };
-                let key_result = timeout(key_timeout, browser.press_key_with_fallback(key)).await;
+                let key_result = timeout(
+                    key_timeout,
+                    browser.press_key_with_modifiers(key.to_owned(), modifiers),
+                )
+                .await;
                 match key_result {
                     Ok(Ok(())) => {
-                        diagnostics.record(format!("RECV engine key {key} ok"));
+                        diagnostics.record(format!("RECV engine key {modifier_label}{key} ok"));
                         suppress_initial_input_key_until = None;
-                        message = format!("sent key {key}");
+                        message = format!("sent key {modifier_label}{key}");
                         terminal.status(size.rows, &message)?;
                         terminal.flush()?;
                         if key == "Enter" {
@@ -1290,6 +1361,45 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                 }
             }
             Command::BrowserText(c) => {
+                if !armed_modifiers.is_empty() {
+                    let modifiers = std::mem::take(&mut armed_modifiers);
+                    let modifier_label = browser_modifier_label(modifiers);
+                    let key = c.to_string();
+                    show_working(&mut terminal, size, "sending modified page key")?;
+                    diagnostics.record(format!("POST engine key {modifier_label}{key}"));
+                    match timeout(
+                        Duration::from_millis(1_200),
+                        browser.press_key_with_modifiers(key.clone(), modifiers),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => {
+                            diagnostics.record(format!("RECV engine key {modifier_label}{key} ok"));
+                            message = format!("sent key {modifier_label}{key}");
+                            schedule_input_redraw(&mut pending_redraw_at);
+                        }
+                        Ok(Err(error)) => {
+                            diagnostics.record(format!(
+                                "RECV engine key {modifier_label}{key} error: {error}"
+                            ));
+                            message = format!("modified key failed: {error}");
+                            browser_connected = false;
+                            input_mode = InputMode::Normal;
+                            needs_redraw = true;
+                        }
+                        Err(_) => {
+                            diagnostics.record(format!("TIMEOUT app key {modifier_label}{key}"));
+                            message = format!("key {modifier_label}{key} is still processing");
+                            schedule_redraw_burst(
+                                &mut pending_redraw_at,
+                                &mut redraw_burst_remaining,
+                            );
+                        }
+                    }
+                    terminal.status(size.rows, &message)?;
+                    terminal.flush()?;
+                    continue;
+                }
                 if c == 'r'
                     && timeout(
                         Duration::from_millis(300),
@@ -1992,7 +2102,12 @@ fn draw_disconnected(
     if terminal.has_toolbar() {
         terminal.status(
             toolbar_row(size),
-            &toolbar_text(size.columns, &TabInfo::default()),
+            &toolbar_text(
+                size.columns,
+                &TabInfo::default(),
+                BrowserModifiers::default(),
+                100,
+            ),
         )?;
     }
     if let Some(diagnostics) = diagnostics {
@@ -2169,7 +2284,12 @@ async fn redraw(
         tab_info.is_loading,
         options.loading_frame,
     );
-    let toolbar = toolbar_text(size.columns, &tab_info);
+    let toolbar = toolbar_text(
+        size.columns,
+        &tab_info,
+        options.armed_modifiers,
+        options.zoom_percent,
+    );
     let renderer_label = renderer.terminal_cell_pixels().map_or_else(
         || renderer.name().to_string(),
         |cell_pixels| {
@@ -2376,7 +2496,12 @@ fn prompt_line(
     }
 }
 
-fn toolbar_text(columns: u16, tab_info: &TabInfo) -> String {
+fn toolbar_text(
+    columns: u16,
+    tab_info: &TabInfo,
+    armed_modifiers: BrowserModifiers,
+    zoom_percent: u16,
+) -> String {
     let mut text = String::new();
     for (index, (label, _description)) in TOOLBAR_BUTTONS.iter().enumerate() {
         // Disabled history labels retain the display width of [B]/[F]. The
@@ -2384,6 +2509,9 @@ fn toolbar_text(columns: u16, tab_info: &TabInfo) -> String {
         let label = match index {
             0 if !tab_info.can_go_back => "(B)",
             1 if !tab_info.can_go_forward => "(F)",
+            4 if armed_modifiers.control => "[CTRL]",
+            5 if armed_modifiers.alt => "[ALT]",
+            6 if armed_modifiers.meta => "[META]",
             _ => label,
         };
         let separator = if text.is_empty() { "" } else { " " };
@@ -2393,7 +2521,29 @@ fn toolbar_text(columns: u16, tab_info: &TabInfo) -> String {
         text.push_str(separator);
         text.push_str(label);
     }
+    let zoom_label = format!(" {zoom_percent}%");
+    if text.len() + zoom_label.len() <= usize::from(columns) {
+        text.push_str(&zoom_label);
+    }
     text
+}
+
+fn browser_modifier_label(modifiers: BrowserModifiers) -> String {
+    let mut labels = Vec::new();
+    if modifiers.control {
+        labels.push("Ctrl");
+    }
+    if modifiers.alt {
+        labels.push("Alt");
+    }
+    if modifiers.meta {
+        labels.push("Command / Windows");
+    }
+    if labels.is_empty() {
+        String::new()
+    } else {
+        format!("{}+", labels.join("+"))
+    }
 }
 
 fn active_tab_status(tab_info: &TabInfo, state: &PageState) -> String {
@@ -2589,11 +2739,17 @@ fn toolbar_command(columns: u16, column: u16) -> Option<Command> {
                 1 => Some(Command::Forward),
                 2 => Some(Command::Reload),
                 3 => Some(Command::GoToUrl),
-                4 => Some(Command::NewTab),
-                5 => Some(Command::PreviousTab),
-                6 => Some(Command::NextTab),
-                7 => Some(Command::OpenVerification),
-                8 => Some(Command::Help),
+                4 => Some(Command::ToggleBrowserModifier(BrowserModifier::Control)),
+                5 => Some(Command::ToggleBrowserModifier(BrowserModifier::Alt)),
+                6 => Some(Command::ToggleBrowserModifier(BrowserModifier::Meta)),
+                7 => Some(Command::ZoomOut),
+                8 => Some(Command::ZoomIn),
+                9 => Some(Command::ZoomReset),
+                10 => Some(Command::NewTab),
+                11 => Some(Command::PreviousTab),
+                12 => Some(Command::NextTab),
+                13 => Some(Command::OpenVerification),
+                14 => Some(Command::Help),
                 _ => None,
             };
         }
@@ -2617,7 +2773,7 @@ fn truncate_to_columns(value: &str, columns: usize) -> String {
 fn draw_help_panel(terminal: &mut Terminal, size: crate::render::RenderSize) -> Result<()> {
     let lines = [
         version_info(),
-        "Mouse toolbar: [B] back [F] forward [R] reload [URL] go [+Tab] new [<Tab]/[Tab>] switch [V] verify [?] help",
+        "Mouse toolbar: [B]/[F] history [R] reload [URL] go [Ctrl]/[Alt]/[Meta] arm next page key [-]/[+]/[100] zoom",
         "Keys: q/Ctrl+Q quit | Esc blur/previous tab | r/R reload | g URL | b/B or [ back | F or ] forward | t new tab | x close tab",
         "Tabs: {/}/Ctrl+Tab switch | v/V open browser for verification | f numbered link hints",
         "Diagnostics: --debug or --debug-overlay shows POST/RECV timeline; d/D toggles it in normal mode",
@@ -2645,10 +2801,10 @@ mod tests {
         format_link_hint_activation, frame_debug_summary, loading_indicator, loading_redraw_delay,
         normalize_primary_mouse_command, open_in_regular_browser, presentation_fingerprint,
         schedule_scroll_redraw, should_clear_before_frame, tab_strip_row, tab_strip_target,
-        tab_strip_text, toolbar_row, toolbar_text, working_status, TabStripAction,
+        tab_strip_text, toolbar_command, toolbar_row, toolbar_text, working_status, TabStripAction,
     };
     use crate::browser::{HoverOutcome, LinkHintOutcome, TabInfo};
-    use crate::input::Command;
+    use crate::input::{BrowserModifier, BrowserModifiers, Command};
     use crate::render::{BackendChoice, RenderSize, SelectedBackend};
     use image::{DynamicImage, Rgba, RgbaImage};
     use std::time::Instant;
@@ -2882,7 +3038,7 @@ mod tests {
 
     #[test]
     fn toolbar_marks_unavailable_history_without_changing_click_columns() {
-        let unavailable = toolbar_text(80, &TabInfo::default());
+        let unavailable = toolbar_text(80, &TabInfo::default(), BrowserModifiers::default(), 100);
         assert!(unavailable.starts_with("(B) (F) [R]"));
 
         let available = toolbar_text(
@@ -2892,9 +3048,32 @@ mod tests {
                 can_go_forward: true,
                 ..TabInfo::default()
             },
+            BrowserModifiers::default(),
+            100,
         );
         assert!(available.starts_with("[B] [F] [R]"));
         assert_eq!(unavailable.chars().count(), available.chars().count());
+    }
+
+    #[test]
+    fn toolbar_marks_armed_modifiers_and_maps_their_buttons() {
+        let modifiers = BrowserModifiers {
+            control: true,
+            alt: false,
+            meta: true,
+        };
+        let toolbar = toolbar_text(120, &TabInfo::default(), modifiers, 110);
+        assert!(toolbar.contains("[CTRL]"));
+        assert!(toolbar.contains("[META]"));
+        assert!(toolbar.ends_with("110%"));
+
+        let ctrl_column = toolbar.find("[CTRL]").expect("Ctrl toolbar button") as u16;
+        let zoom_in_column = toolbar.find("[+]").expect("zoom in toolbar button") as u16;
+        assert_eq!(
+            toolbar_command(120, ctrl_column),
+            Some(Command::ToggleBrowserModifier(BrowserModifier::Control))
+        );
+        assert_eq!(toolbar_command(120, zoom_in_column), Some(Command::ZoomIn));
     }
 
     #[test]
