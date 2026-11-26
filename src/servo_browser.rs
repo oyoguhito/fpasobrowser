@@ -36,6 +36,12 @@ const DEFAULT_BROWSER_VIEWPORT_HEIGHT: u32 = 540;
 const ENGINE_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 const FRAME_WAIT_STEPS: usize = 600;
 const FRAME_WAIT_INTERVAL: Duration = Duration::from_millis(16);
+// A plain anchor is loaded explicitly because Servo's offscreen pointer path
+// can omit its default action.  A few immediate `spin_event_loop` calls are
+// not enough to start a cross-document scene swap on Windows, but waiting for
+// the full navigation timeout would make a click look hung.  Drive the owner
+// loop briefly, then let the terminal's bounded redraw sampler continue.
+const DIRECT_NAVIGATION_FRAME_WAIT_STEPS: usize = 75;
 // `take_screenshot` callbacks can be deferred indefinitely by Servo while a
 // page swaps documents. The software surface is still readable, so wait only
 // briefly for the authoritative callback before using that painted frame.
@@ -952,8 +958,15 @@ fn engine_loop(
                         // About/Store. A plain, same-tab anchor is already
                         // fully resolved by the inspection pass, so load it
                         // once and avoid the duplicate native activation.
+                        let frame_serial = tabs[active].signals.begin_navigation();
                         webview.load(href);
-                        pump(servo, webview, 2);
+                        let _ = wait_for_frame_signal(
+                            servo,
+                            webview,
+                            &tabs[active].signals,
+                            frame_serial,
+                            DIRECT_NAVIGATION_FRAME_WAIT_STEPS,
+                        );
                     } else {
                         webview.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(
                             point.into(),
@@ -1191,6 +1204,28 @@ fn pump(servo: &Servo, webview: &WebView, steps: usize) {
         servo.spin_event_loop();
         webview.paint();
     }
+}
+
+/// Give an explicit same-tab link load a short opportunity to publish its
+/// first frame.  This intentionally has no error result: a slow server is not
+/// a failed browser, and the app keeps sampling the cached/current surface
+/// after this small owner-thread turn.
+fn wait_for_frame_signal(
+    servo: &Servo,
+    webview: &WebView,
+    signals: &PageSignals,
+    previous_frame_serial: usize,
+    steps: usize,
+) -> bool {
+    for _ in 0..steps {
+        servo.spin_event_loop();
+        webview.paint();
+        if signals.frame_serial.load(Ordering::Acquire) > previous_frame_serial {
+            return true;
+        }
+        thread::sleep(FRAME_WAIT_INTERVAL);
+    }
+    false
 }
 
 fn evaluate_javascript(servo: &Servo, webview: &WebView, script: &str) -> Result<JSValue> {
