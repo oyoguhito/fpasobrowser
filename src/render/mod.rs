@@ -174,35 +174,6 @@ where
         || environment("TERM").is_some_and(|value| value.eq_ignore_ascii_case("xterm-kitty"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn windows_without_native_kitty_markers_uses_fpasoterm_osc() {
-        assert!(should_use_windows_fpasoterm_osc_transport_for_environment(
-            true,
-            &|name| (name == "TERM").then(|| String::from("xterm-256color")),
-        ));
-    }
-
-    #[test]
-    fn native_kitty_markers_keep_the_standard_protocol() {
-        assert!(!should_use_windows_fpasoterm_osc_transport_for_environment(
-            true,
-            &|name| (name == "KITTY_WINDOW_ID").then(|| String::from("42")),
-        ));
-    }
-
-    #[test]
-    fn non_windows_terminals_do_not_use_the_private_osc_bridge() {
-        assert!(!should_use_windows_fpasoterm_osc_transport_for_environment(
-            false,
-            &|name| (name == "TERM").then(|| String::from("xterm-256color")),
-        ));
-    }
-}
-
 impl RenderBackend for SelectedBackend {
     fn name(&self) -> &'static str {
         match self {
@@ -250,5 +221,34 @@ impl RenderBackend for SelectedBackend {
             Self::Sixel(backend) => backend.cleanup(writer),
             Self::Kitty(backend) => backend.cleanup(writer),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_without_native_kitty_markers_uses_fpasoterm_osc() {
+        assert!(should_use_windows_fpasoterm_osc_transport_for_environment(
+            true,
+            &|name| (name == "TERM").then(|| String::from("xterm-256color")),
+        ));
+    }
+
+    #[test]
+    fn native_kitty_markers_keep_the_standard_protocol() {
+        assert!(!should_use_windows_fpasoterm_osc_transport_for_environment(
+            true,
+            &|name| (name == "KITTY_WINDOW_ID").then(|| String::from("42")),
+        ));
+    }
+
+    #[test]
+    fn non_windows_terminals_do_not_use_the_private_osc_bridge() {
+        assert!(!should_use_windows_fpasoterm_osc_transport_for_environment(
+            false,
+            &|name| (name == "TERM").then(|| String::from("xterm-256color")),
+        ));
     }
 }
