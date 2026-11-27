@@ -20,10 +20,15 @@ fn explicit_half_block_selects_half_block_backend() {
 }
 
 #[test]
-fn explicit_kitty_uses_standard_png_transport() {
+fn explicit_kitty_uses_the_platform_appropriate_transport() {
     let backend = SelectedBackend::from_choice(BackendChoice::Kitty);
     assert_eq!(backend.name(), "kitty");
-    assert_eq!(backend.transport_label(), "kitty-png");
+    let expected = if cfg!(target_os = "windows") {
+        "fpasoterm-osc-png"
+    } else {
+        "kitty-png"
+    };
+    assert_eq!(backend.transport_label(), expected);
 }
 
 #[test]
