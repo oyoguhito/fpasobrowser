@@ -24,7 +24,7 @@ fn explicit_kitty_uses_the_platform_appropriate_transport() {
     let backend = SelectedBackend::from_choice(BackendChoice::Kitty);
     assert_eq!(backend.name(), "kitty");
     let expected = if cfg!(target_os = "windows") {
-        "fpasoterm-osc-png-bel"
+        "fpasoterm-osc-png"
     } else {
         "kitty-png"
     };
@@ -136,7 +136,7 @@ fn windows_fpasoterm_backend_uses_osc_wrapped_png_when_conpty_discards_kitty_apc
     let image = DynamicImage::ImageRgba8(RgbaImage::new(1, 2));
     let backend = KittyBackend::for_windows_fpasoterm();
     let mut output = Vec::new();
-    assert_eq!(backend.transport_label(), "fpasoterm-osc-png-bel");
+    assert_eq!(backend.transport_label(), "fpasoterm-osc-png");
     backend.render(
         &image,
         RenderSize {
@@ -150,7 +150,7 @@ fn windows_fpasoterm_backend_uses_osc_wrapped_png_when_conpty_discards_kitty_apc
     assert!(output.starts_with("\x1b[H\x1b]777;graphics;v=1;a=T,f=100,t=d,i="));
     assert!(output.contains(",c=10,r=5,C=1,q=2,m="));
     assert!(!output.contains("\x1b_G"));
-    assert!(output.ends_with('\x07'));
+    assert!(output.ends_with("\x1b\\"));
     Ok(())
 }
 
@@ -182,7 +182,7 @@ fn windows_fpasoterm_osc_png_envelopes_stay_below_the_conpty_legacy_limit() -> R
     let envelopes: Vec<_> = output
         .strip_prefix("\x1b[H")
         .expect("the image anchor precedes the bridge payload")
-        .split('\x07')
+        .split("\x1b\\")
         .filter(|envelope| !envelope.is_empty())
         .collect();
     assert!(
