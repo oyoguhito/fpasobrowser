@@ -95,7 +95,7 @@ impl KittyBackend {
     pub const fn transport_label(&self) -> &'static str {
         match self.transport {
             KittyTransport::StandardApc => "kitty-png",
-            KittyTransport::FpasotermOsc => "fpasoterm-osc-png",
+            KittyTransport::FpasotermOsc => "fpasoterm-osc-png-bel",
         }
     }
 
@@ -107,7 +107,7 @@ impl KittyBackend {
             KittyTransport::FpasotermOsc => {
                 write!(
                     writer,
-                    "\x1b]777;graphics;v=1;a=d,d=I,i={image_id},q=2;\x1b\\"
+                    "\x1b]777;graphics;v=1;a=d,d=I,i={image_id},q=2;\x07"
                 )?;
             }
         }
@@ -212,7 +212,12 @@ impl RenderBackend for KittyBackend {
                     write!(writer, "\x1b_G{control};{chunk}\x1b\\")?;
                 }
                 KittyTransport::FpasotermOsc => {
-                    write!(writer, "\x1b]777;graphics;v=1;{control};{chunk}\x1b\\")?;
+                    // Windows ConPTY can consume an ST-terminated private
+                    // OSC before fpasoterm's PTY reader sees it. Its OSC
+                    // parser accepts BEL as well, and fpasoterm consumes the
+                    // terminator without ringing, so use the older form for
+                    // this private Windows bridge only.
+                    write!(writer, "\x1b]777;graphics;v=1;{control};{chunk}\x07")?;
                 }
             }
         }
