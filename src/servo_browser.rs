@@ -43,12 +43,6 @@ const MAX_BROWSER_ZOOM_PERCENT: u16 = 150;
 const ENGINE_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 const FRAME_WAIT_STEPS: usize = 600;
 const FRAME_WAIT_INTERVAL: Duration = Duration::from_millis(16);
-// A plain anchor is loaded explicitly because Servo's offscreen pointer path
-// can omit its default action.  A few immediate `spin_event_loop` calls are
-// not enough to start a cross-document scene swap on Windows, but waiting for
-// the full navigation timeout would make a click look hung.  Drive the owner
-// loop briefly, then let the terminal's bounded redraw sampler continue.
-const DIRECT_NAVIGATION_FRAME_WAIT_STEPS: usize = 75;
 // `take_screenshot` callbacks can be deferred indefinitely by Servo while a
 // page swaps documents. The software surface is still readable, so wait only
 // briefly for the authoritative callback before using that painted frame.
@@ -1019,42 +1013,26 @@ fn engine_loop(
                     // its editing/default key actions on Windows.
                     let _focused_directly = before.editable
                         && focus_editable_at_point(servo, webview, point).unwrap_or(false);
-                    let direct_navigation = direct_anchor_navigation(&before);
-                    if let Some(href) = direct_navigation.clone() {
-                        // Servo's offscreen pointer path can either skip an
-                        // anchor default action or start it asynchronously.
-                        // Sending native Down/Up and then starting a second
-                        // navigation races those document swaps.  Conversely,
-                        // `WebView::load` can update the URL yet leave its
-                        // current software surface on the prior document on
-                        // Windows.  Use the DOM navigation path that a plain
-                        // same-tab anchor itself uses, once, without emitting
-                        // the duplicate native pointer sequence.
-                        let frame_serial = tabs[active].signals.begin_navigation();
-                        navigate_same_tab_anchor(webview, &href);
-                        let _ = wait_for_frame_signal(
-                            servo,
-                            webview,
-                            &tabs[active].signals,
-                            frame_serial,
-                            DIRECT_NAVIGATION_FRAME_WAIT_STEPS,
-                        );
-                    } else {
-                        webview.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(
-                            point.into(),
-                        )));
-                        webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
-                            MouseButtonAction::Down,
-                            MouseButton::Primary,
-                            point.into(),
-                        )));
-                        webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
-                            MouseButtonAction::Up,
-                            MouseButton::Primary,
-                            point.into(),
-                        )));
-                        pump(servo, webview, 3);
-                    }
+                    // Preserve Servo's normal pointer/default-action path.
+                    // Replacing a link activation with a JavaScript
+                    // `location.assign` changed page behaviour and could
+                    // leave the old Windows software surface visible.  A
+                    // recognized ordinary anchor merely tells the terminal
+                    // to keep sampling for its destination frame below.
+                    webview.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(
+                        point.into(),
+                    )));
+                    webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
+                        MouseButtonAction::Down,
+                        MouseButton::Primary,
+                        point.into(),
+                    )));
+                    webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
+                        MouseButtonAction::Up,
+                        MouseButton::Primary,
+                        point.into(),
+                    )));
+                    pump(servo, webview, 3);
                     let navigation_in_flight = webview.load_status() != LoadStatus::Complete;
                     // Only controls that need keyboard ownership require a
                     // post-click DOM query. A link or button has already
@@ -1263,9 +1241,9 @@ struct InspectedTarget {
     direct_anchor_navigation: bool,
 }
 
-// Use an explicit WebView load only for a plain same-tab anchor. Links with a
-// target, a download, or an inline handler retain Servo's native pointer path
-// so popup and page-specific semantics are preserved.
+// A plain same-tab anchor is expected to replace the document.  Retain that
+// fact for redraw scheduling, but let Servo's native pointer default action
+// perform the navigation.
 fn direct_anchor_navigation(target: &InspectedTarget) -> Option<Url> {
     target
         .direct_anchor_navigation
@@ -1278,49 +1256,6 @@ fn pump(servo: &Servo, webview: &WebView, steps: usize) {
         servo.spin_event_loop();
         webview.paint();
     }
-}
-
-/// Initiate a resolved ordinary-anchor navigation in the page's own browsing
-/// context. The callback is intentionally ignored: a successful navigation
-/// may discard the source document before Servo delivers that JavaScript
-/// completion callback.
-fn navigate_same_tab_anchor(webview: &WebView, href: &Url) {
-    let href = javascript_string_literal(href.as_str());
-    webview.evaluate_javascript(&format!("window.location.assign({href});"), |_| {});
-}
-
-/// Quote a parsed URL for the one small navigation script above. URLs cannot
-/// contain raw control characters, but quote the JavaScript-sensitive cases
-/// explicitly rather than relying on display/debug formatting.
-fn javascript_string_literal(value: &str) -> String {
-    let escaped = value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\u{2028}', "\\u2028")
-        .replace('\u{2029}', "\\u2029");
-    format!("\"{escaped}\"")
-}
-
-/// Give an explicit same-tab link load a short opportunity to publish its
-/// first frame.  This intentionally has no error result: a slow server is not
-/// a failed browser, and the app keeps sampling the cached/current surface
-/// after this small owner-thread turn.
-fn wait_for_frame_signal(
-    servo: &Servo,
-    webview: &WebView,
-    signals: &PageSignals,
-    previous_frame_serial: usize,
-    steps: usize,
-) -> bool {
-    for _ in 0..steps {
-        servo.spin_event_loop();
-        webview.paint();
-        if signals.frame_serial.load(Ordering::Acquire) > previous_frame_serial {
-            return true;
-        }
-        thread::sleep(FRAME_WAIT_INTERVAL);
-    }
-    false
 }
 
 fn evaluate_javascript(servo: &Servo, webview: &WebView, script: &str) -> Result<JSValue> {
@@ -2184,8 +2119,7 @@ fn terminal_cell_to_viewport_point(
 mod tests {
     use super::{
         browser_viewport, direct_anchor_navigation, is_probably_unpainted_surface,
-        javascript_string_literal, scale_browser_viewport, terminal_cell_to_viewport_point,
-        BrowserViewport, InspectedTarget,
+        scale_browser_viewport, terminal_cell_to_viewport_point, BrowserViewport, InspectedTarget,
     };
     use crate::render::{RenderSize, TerminalCellPixels};
     use image::{DynamicImage, Rgba, RgbaImage};
@@ -2209,14 +2143,6 @@ mod tests {
                 ..InspectedTarget::default()
             }),
             None
-        );
-    }
-
-    #[test]
-    fn anchor_navigation_url_is_a_safe_javascript_string() {
-        assert_eq!(
-            javascript_string_literal("https://example.test/a\\b\"c\u{2028}d"),
-            "\"https://example.test/a\\\\b\\\"c\\u2028d\""
         );
     }
 

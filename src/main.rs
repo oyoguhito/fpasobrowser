@@ -266,10 +266,12 @@ struct BackendSelection {
 /// be issued before a TUI takes ownership of terminal input. Use positive
 /// identifiers that are inherited by child processes instead: Kitty exposes
 /// `KITTY_WINDOW_ID`/an `xterm-kitty` TERM and fpasoterm sets
-/// `TERM_PROGRAM=fpasoterm`. On Windows, fpasoterm additionally advertises
-/// its `osc-v1` graphics bridge because ConPTY consumes Kitty APC sequences.
-/// Unknown terminals deliberately fall back rather than receiving opaque
-/// graphics escape sequences.
+/// `TERM_PROGRAM=fpasoterm`. On Windows, a current fpasoterm also advertises
+/// its graphics integration through `FPASOTERM_GRAPHICS_TRANSPORT=osc-v1`.
+/// The browser still emits the standard Kitty PNG/APC protocol; the marker is
+/// only a conservative compatibility signal for automatic selection. Unknown
+/// terminals deliberately fall back rather than receiving opaque graphics
+/// escape sequences.
 fn select_backend(requested: Option<BackendChoice>) -> BackendSelection {
     select_backend_from_environment(requested, |name| std::env::var(name).ok())
 }
@@ -285,12 +287,12 @@ where
         // An explicit Kitty request is an intentional diagnostic/compatibility
         // choice. Keep auto detection conservative for an old Windows
         // fpasoterm, but do not silently replace the requested backend: the
-        // current fpasoterm renderer understands the OSC bridge even when a
-        // shell inherited without its capability variable.
+        // standard Kitty output even when a shell inherited without its
+        // capability variable.
         Some(BackendChoice::Kitty) if legacy_windows_fpasoterm(&environment) => BackendSelection {
             choice: BackendChoice::Kitty,
             initial_activity: Some(String::from(
-                "Windows fpasoterm graphics bridge is not advertised; forcing Kitty bridge (update fpasoterm if no image appears)",
+                "Windows fpasoterm graphics support is not advertised; forcing standard Kitty output (update fpasoterm if no image appears)",
             )),
         },
         Some(choice @ (BackendChoice::HalfBlock | BackendChoice::Sixel | BackendChoice::Kitty)) => {
@@ -319,7 +321,7 @@ where
     F: Fn(&str) -> Option<String>,
 {
     if environment("TERM_PROGRAM").is_some_and(|value| value.eq_ignore_ascii_case("fpasoterm")) {
-        return !cfg!(target_os = "windows") || fpasoterm_osc_bridge_is_advertised(environment);
+        return !cfg!(target_os = "windows") || fpasoterm_graphics_is_advertised(environment);
     }
     environment("KITTY_WINDOW_ID").is_some_and(|value| !value.trim().is_empty())
         || environment("TERM").is_some_and(|value| value.eq_ignore_ascii_case("xterm-kitty"))
@@ -331,10 +333,10 @@ where
 {
     cfg!(target_os = "windows")
         && environment("TERM_PROGRAM").is_some_and(|value| value.eq_ignore_ascii_case("fpasoterm"))
-        && !fpasoterm_osc_bridge_is_advertised(environment)
+        && !fpasoterm_graphics_is_advertised(environment)
 }
 
-fn fpasoterm_osc_bridge_is_advertised<F>(environment: &F) -> bool
+fn fpasoterm_graphics_is_advertised<F>(environment: &F) -> bool
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -452,8 +454,8 @@ mod tests {
     }
 
     #[test]
-    fn fpasoterm_osc_bridge_capability_is_recognized() {
-        assert!(fpasoterm_osc_bridge_is_advertised(&|name| {
+    fn fpasoterm_graphics_capability_is_recognized() {
+        assert!(fpasoterm_graphics_is_advertised(&|name| {
             (name == "FPASOTERM_GRAPHICS_TRANSPORT").then(|| String::from("osc-v1"))
         }));
     }

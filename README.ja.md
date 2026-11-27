@@ -106,12 +106,12 @@ modifierを付けます。RDPやterminalがphysical chordを横取りする場�
 からpage内で`c`等のkeyを押すことで`Ctrl+C`等を送れます。armed stateは次のkey送信、zoom操作、
 または同じbuttonの再clickで解除されます。
 
-Kitty Graphics Protocolが使えるKitty、またはgraphics bridgeをadvertiseするfpasotermでは、
-引数なしの`auto`が`kitty`を選びます。Windows版fpasotermではConPTYがKittyのAPCを
-破棄するため、current fpasotermがchild processへ通知する`osc-v1` bridgeを使います。
-`auto`では、この通知が無い古いfpasotermを黒い画面にせず`half-block`へfallbackします。
-一方、`--backend kitty`は明示指定を尊重し、通知を継承できていない既存tab/RDP sessionでも
-Windows用OSC bridgeを試行します。imageが出ない場合はfpasotermを更新・完全再起動してから
+Kitty Graphics Protocolが使えるKitty、またはgraphics対応をadvertiseするfpasotermでは、
+引数なしの`auto`が`kitty`を選びます。Windows版のcurrent fpasotermはchild processへ
+`FPASOTERM_GRAPHICS_TRANSPORT=osc-v1`を通知しますが、fpasobrowserが送るのは標準の
+Kitty PNG/APC protocolです。`auto`では、この通知が無い古いfpasotermを`half-block`へ
+fallbackします。一方、`--backend kitty`は明示指定を尊重し、通知を継承できていない既存tab/RDP
+sessionでも標準Kitty出力を試行します。imageが出ない場合はfpasotermを更新・完全再起動してから
 再試行してください。
 
 ```powershell
@@ -119,21 +119,15 @@ Windows用OSC bridgeを試行します。imageが出ない場合はfpasotermを�
 ```
 
 Windows上のfpasoterm内では、`--debug`に
-`backend=kitty transport=fpasoterm-osc-rgba-zlib`が出ることを確認してください。fpasotermの
-Diagnosticsを`graphics`でfilterすると、最初のframeで
-`fpasoterm graphics transfer received`と`fpasoterm graphics rendered`が出ます。前者が
-出ない場合はfpasotermもこのbridge対応版へ更新してください。
+`backend=kitty transport=kitty-png`が出ることを確認してください。これは標準Kitty PNG/APC
+protocolを送っていることを示します。遷移後も前frameを保持したまま、新しいpage frameを取得・
+表示します。
 
 `--debug`では、標準errorへの出力に加えてpage上部へ **FPASOBROWSER DEVTOOLS** の
 operation timelineを表示します。`POST engine click` / `POST engine key Enter`はbrowserへの
 要求送信、対応する`RECV`はreply、`TIMEOUT`はapp側の待機切れです。screenshot、tab情報、
 verification queryも同じ表示で追跡できます。通常起動でこの表示だけを使うには
 `--debug-overlay`を指定します。normal modeで`d`または`D`を押すと表示・非表示を切替できます。
-
-Windows ConPTYの長いOSC sequenceが壊れる既知の経路を避けるため、bridgeはpayloadを短い
-OSC packetへ分割して送ります。bridgeではWebView2のPNG合成を通さず、zlib圧縮したraw RGBA
-（`format=32`、`compression=z`）をfpasotermのCanvasへ直接描画します。成功時は
-`paint=raw-rgba-putImageData`が表示されます。
 
 Windows release archiveを展開した場合は、同じdirectoryの`fpasobrowser.cmd`から起動します。
 archiveには`fpasobrowser.exe`、`libEGL.dll`、`libGLESv2.dll`が含まれるため、Cargo、Python、
@@ -143,10 +137,10 @@ LLVMは不要です。
 
 | backend | 用途 |
 | --- | --- |
-| `auto` | 既定。Kitty、またはbridge対応のfpasotermを検出できれば`kitty`、それ以外は`half-block`を選択します。Windowsで古いfpasotermを検出した場合も`half-block`へfallbackします。 |
+| `auto` | 既定。Kitty、またはgraphics対応のfpasotermを検出できれば`kitty`、それ以外は`half-block`を選択します。Windowsで互換性通知のない古いfpasotermを検出した場合も`half-block`へfallbackします。 |
 | `half-block` | ANSI truecolorのみを使う可搬性重視のfallbackです。 |
 | `sixel` | SIXEL対応terminal用の216色画像表示です。 |
-| `kitty` | 圧縮済みPNG画像をterminal cellへ配置します。KittyとWindows以外のfpasotermには標準Kitty Graphics Protocol (APC) を使います。Windows fpasotermではConPTYがAPCを破棄するため、zlib圧縮したraw RGBA（`f=32`）をprivate OSC bridgeで送ってCanvasへ直接描画します。debug表示は`fpasoterm-osc-rgba-zlib`です。fpasotermでは非同期描画前にframeを削除しないよう、送信側でのframe retirementを遅延します。 |
+| `kitty` | 圧縮済みPNG画像を標準Kitty Graphics Protocol (APC) でterminal cellへ配置します。debug表示は`kitty-png`です。fpasotermを識別できる場合は、遷移frameのdecode中にも前frameを残すため、送信側のframe retirementを遅延します。 |
 
 ## 操作
 

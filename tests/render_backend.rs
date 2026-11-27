@@ -6,6 +6,7 @@ use fpasobrowser::render::{
     SelectedBackend, TerminalCellPixels,
 };
 use image::{DynamicImage, RgbaImage};
+use std::io::Read;
 
 #[test]
 fn auto_selects_half_block_backend() {

@@ -134,7 +134,16 @@ impl SelectedBackend {
 }
 
 fn fpasoterm_is_terminal() -> bool {
-    std::env::var("TERM_PROGRAM").is_ok_and(|value| value.eq_ignore_ascii_case("fpasoterm"))
+    fpasoterm_is_terminal_in_environment(&|name| std::env::var(name).ok())
+}
+
+fn fpasoterm_is_terminal_in_environment<F>(environment: &F) -> bool
+where
+    F: Fn(&str) -> Option<String>,
+{
+    environment("TERM_PROGRAM").is_some_and(|value| value.eq_ignore_ascii_case("fpasoterm"))
+        || environment("FPASOTERM_GRAPHICS_TRANSPORT")
+            .is_some_and(|value| value.eq_ignore_ascii_case("osc-v1"))
 }
 
 impl RenderBackend for SelectedBackend {
@@ -184,5 +193,17 @@ impl RenderBackend for SelectedBackend {
             Self::Sixel(backend) => backend.cleanup(writer),
             Self::Kitty(backend) => backend.cleanup(writer),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fpasoterm_is_terminal_in_environment;
+
+    #[test]
+    fn fpasoterm_graphics_capability_survives_a_restored_terminal_tab() {
+        assert!(fpasoterm_is_terminal_in_environment(&|name| {
+            (name == "FPASOTERM_GRAPHICS_TRANSPORT").then(|| String::from("osc-v1"))
+        }));
     }
 }
