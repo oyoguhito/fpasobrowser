@@ -267,11 +267,11 @@ struct BackendSelection {
 /// identifiers that are inherited by child processes instead: Kitty exposes
 /// `KITTY_WINDOW_ID`/an `xterm-kitty` TERM and fpasoterm sets
 /// `TERM_PROGRAM=fpasoterm`. On Windows, a current fpasoterm also advertises
-/// its graphics integration through `FPASOTERM_GRAPHICS_TRANSPORT=osc-v1`.
-/// The browser still emits the standard Kitty PNG/APC protocol; the marker is
-/// only a conservative compatibility signal for automatic selection. Unknown
-/// terminals deliberately fall back rather than receiving opaque graphics
-/// escape sequences.
+/// its authenticated graphics bridge through `FPASOTERM_GRAPHICS_TRANSPORT=ipc-v1`.
+/// The bridge preserves Kitty PNG image/placement semantics while bypassing
+/// ConPTY, which removes the public APC stream before the renderer can parse
+/// it. Unknown terminals deliberately fall back rather than receiving opaque
+/// graphics escape sequences.
 fn select_backend(requested: Option<BackendChoice>) -> BackendSelection {
     select_backend_from_environment(requested, |name| std::env::var(name).ok())
 }
@@ -287,12 +287,12 @@ where
         // An explicit Kitty request is an intentional diagnostic/compatibility
         // choice. Keep auto detection conservative for an old Windows
         // fpasoterm, but do not silently replace the requested backend: the
-        // standard Kitty output even when a shell inherited without its
-        // capability variable.
+        // fpasoterm's compatible Kitty presentation even when a shell
+        // inherited without its capability variable.
         Some(BackendChoice::Kitty) if legacy_windows_fpasoterm(&environment) => BackendSelection {
             choice: BackendChoice::Kitty,
             initial_activity: Some(String::from(
-                "Windows fpasoterm graphics support is not advertised; forcing standard Kitty output (update fpasoterm if no image appears)",
+                "Windows fpasoterm graphics bridge is not advertised; forcing Kitty output (update fpasoterm if no image appears)",
             )),
         },
         Some(choice @ (BackendChoice::HalfBlock | BackendChoice::Sixel | BackendChoice::Kitty)) => {
@@ -341,7 +341,7 @@ where
     F: Fn(&str) -> Option<String>,
 {
     environment("FPASOTERM_GRAPHICS_TRANSPORT")
-        .is_some_and(|value| value.eq_ignore_ascii_case("osc-v1"))
+        .is_some_and(|value| value.eq_ignore_ascii_case("ipc-v1"))
 }
 
 /// Create a portable, self-contained start page for URL-less launches.
@@ -431,7 +431,7 @@ mod tests {
         let selection =
             select_backend_from_environment(Some(BackendChoice::Auto), |name| match name {
                 "TERM_PROGRAM" => Some(String::from("fpasoterm")),
-                "FPASOTERM_GRAPHICS_TRANSPORT" => Some(String::from("osc-v1")),
+                "FPASOTERM_GRAPHICS_TRANSPORT" => Some(String::from("ipc-v1")),
                 _ => None,
             });
         assert_eq!(selection.choice, BackendChoice::Kitty);
@@ -456,7 +456,7 @@ mod tests {
     #[test]
     fn fpasoterm_graphics_capability_is_recognized() {
         assert!(fpasoterm_graphics_is_advertised(&|name| {
-            (name == "FPASOTERM_GRAPHICS_TRANSPORT").then(|| String::from("osc-v1"))
+            (name == "FPASOTERM_GRAPHICS_TRANSPORT").then(|| String::from("ipc-v1"))
         }));
     }
 

@@ -108,20 +108,20 @@ modifierを付けます。RDPやterminalがphysical chordを横取りする場�
 
 Kitty Graphics Protocolが使えるKitty、またはgraphics対応をadvertiseするfpasotermでは、
 引数なしの`auto`が`kitty`を選びます。Windows版のcurrent fpasotermはchild processへ
-`FPASOTERM_GRAPHICS_TRANSPORT=osc-v1`を通知しますが、fpasobrowserが送るのは標準の
-Kitty PNG/APC protocolです。`auto`では、この通知が無い古いfpasotermを`half-block`へ
-fallbackします。一方、`--backend kitty`は明示指定を尊重し、通知を継承できていない既存tab/RDP
-sessionでも標準Kitty出力を試行します。imageが出ない場合はfpasotermを更新・完全再起動してから
-再試行してください。
+`FPASOTERM_GRAPHICS_TRANSPORT=ipc-v1`を通知します。これはConPTYがAPCを破棄する経路で、
+KittyのPNG image/placement semanticsを保ったまま、認証済みlocal bridgeでframeを渡すためです。
+`auto`では、この通知が無い古いfpasotermを`half-block`へfallbackします。一方、`--backend kitty`は
+明示指定を尊重し、通知を継承できていない既存tab/RDP sessionでは標準Kitty出力を試行します。imageが
+出ない場合はfpasotermを更新・完全再起動してから再試行してください。
 
 ```powershell
 .\fpasobrowser.cmd --backend kitty --debug
 ```
 
-Windows上のfpasoterm内では、`--debug`に
-`backend=kitty transport=kitty-png`が出ることを確認してください。これは標準Kitty PNG/APC
-protocolを送っていることを示します。遷移後も前frameを保持したまま、新しいpage frameを取得・
-表示します。
+Windows上のcurrent fpasoterm内では、`--debug`に
+`backend=kitty transport=fpasoterm-ipc-png`が出ることを確認してください。固定portを開かず、
+起動したterminal childだけが継承するloopback endpointとtokenを使います。遷移後も前frameを保持した
+まま、新しいpage frameを取得・表示します。
 
 `--debug`では、標準errorへの出力に加えてpage上部へ **FPASOBROWSER DEVTOOLS** の
 operation timelineを表示します。`POST engine click` / `POST engine key Enter`はbrowserへの
@@ -140,7 +140,7 @@ LLVMは不要です。
 | `auto` | 既定。Kitty、またはgraphics対応のfpasotermを検出できれば`kitty`、それ以外は`half-block`を選択します。Windowsで互換性通知のない古いfpasotermを検出した場合も`half-block`へfallbackします。 |
 | `half-block` | ANSI truecolorのみを使う可搬性重視のfallbackです。 |
 | `sixel` | SIXEL対応terminal用の216色画像表示です。 |
-| `kitty` | 圧縮済みPNG画像を標準Kitty Graphics Protocol (APC) でterminal cellへ配置します。debug表示は`kitty-png`です。fpasotermを識別できる場合は、遷移frameのdecode中にも前frameを残すため、送信側のframe retirementを遅延します。 |
+| `kitty` | 圧縮済みPNG画像をKittyのimage/placement semanticsでterminal cellへ配置します。通常のdebug表示は`kitty-png`です。Windows上のcurrent fpasotermではConPTY越しのAPCを使わず、継承済み認証local bridgeによる`fpasoterm-ipc-png`を使います。fpasotermを識別できる場合は、遷移frameのdecode中にも前frameを残すため、送信側のframe retirementを遅延します。 |
 
 ## 操作
 

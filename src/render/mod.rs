@@ -107,15 +107,19 @@ impl SelectedBackend {
                 Some(cell_pixels) => sixel::SixelBackend::with_cell_pixels(cell_pixels),
                 None => sixel::SixelBackend::new(),
             }),
-            // Keep an explicitly requested Kitty backend on the standard
-            // Kitty Graphics Protocol.  fpasoterm uses the same protocol;
-            // its variant merely retains the previous frame while a
-            // navigation frame is being decoded, avoiding a blank interval.
-            BackendChoice::Kitty => Self::Kitty(if fpasoterm_is_terminal() {
-                kitty::KittyBackend::for_fpasoterm()
-            } else {
-                kitty::KittyBackend::new()
-            }),
+            // Windows fpasoterm exposes an inherited, authenticated local
+            // bridge when ConPTY removes both Kitty APC and OSC before the
+            // renderer sees them. It preserves Kitty PNG image/placement
+            // semantics without attempting another escape-sequence wrapper.
+            BackendChoice::Kitty => Self::Kitty(
+                if let Some(backend) = kitty::KittyBackend::for_windows_fpasoterm_ipc() {
+                    backend
+                } else if fpasoterm_is_terminal() {
+                    kitty::KittyBackend::for_fpasoterm()
+                } else {
+                    kitty::KittyBackend::new()
+                },
+            ),
         }
     }
 
@@ -142,8 +146,9 @@ where
     F: Fn(&str) -> Option<String>,
 {
     environment("TERM_PROGRAM").is_some_and(|value| value.eq_ignore_ascii_case("fpasoterm"))
-        || environment("FPASOTERM_GRAPHICS_TRANSPORT")
-            .is_some_and(|value| value.eq_ignore_ascii_case("osc-v1"))
+        || environment("FPASOTERM_GRAPHICS_TRANSPORT").is_some_and(|value| {
+            value.eq_ignore_ascii_case("ipc-v1") || value.eq_ignore_ascii_case("osc-v1")
+        })
 }
 
 impl RenderBackend for SelectedBackend {
@@ -203,7 +208,7 @@ mod tests {
     #[test]
     fn fpasoterm_graphics_capability_survives_a_restored_terminal_tab() {
         assert!(fpasoterm_is_terminal_in_environment(&|name| {
-            (name == "FPASOTERM_GRAPHICS_TRANSPORT").then(|| String::from("osc-v1"))
+            (name == "FPASOTERM_GRAPHICS_TRANSPORT").then(|| String::from("ipc-v1"))
         }));
     }
 }
