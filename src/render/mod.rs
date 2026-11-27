@@ -109,18 +109,16 @@ impl SelectedBackend {
                 Some(cell_pixels) => sixel::SixelBackend::with_cell_pixels(cell_pixels),
                 None => sixel::SixelBackend::new(),
             }),
-            BackendChoice::Kitty => Self::Kitty(if fpasoterm_is_terminal() {
-                // `--backend kitty` is an explicit request. On Windows the
-                // only viable fpasoterm wire path is its OSC bridge, and the
-                // shell capability variable can be absent when an existing
-                // terminal/tab was inherited across RDP. Auto selection has
-                // already guarded that case; once Kitty is selected, use the
-                // bridge rather than sending APC (which ConPTY drops).
-                if cfg!(target_os = "windows") {
-                    kitty::KittyBackend::for_windows_fpasoterm()
-                } else {
-                    kitty::KittyBackend::for_fpasoterm()
-                }
+            BackendChoice::Kitty => Self::Kitty(if should_use_windows_fpasoterm_osc_transport() {
+                // A Windows fpasoterm shell may be restored from an existing
+                // RDP/tab session without TERM_PROGRAM.  ConPTY still drops
+                // Kitty APC in that situation, so use fpasoterm's OSC bridge
+                // unless this is positively identified as a native Kitty
+                // terminal. `auto` remains conservative; this applies only
+                // after the caller explicitly chose Kitty.
+                kitty::KittyBackend::for_windows_fpasoterm()
+            } else if fpasoterm_is_terminal() {
+                kitty::KittyBackend::for_fpasoterm()
             } else {
                 kitty::KittyBackend::new()
             }),
@@ -143,6 +141,66 @@ impl SelectedBackend {
 
 fn fpasoterm_is_terminal() -> bool {
     std::env::var("TERM_PROGRAM").is_ok_and(|value| value.eq_ignore_ascii_case("fpasoterm"))
+}
+
+/// On Windows, a terminal that is not positively identified as native Kitty
+/// is treated as fpasoterm for an explicitly requested Kitty backend.  The
+/// practical Windows deployment is fpasoterm, where ConPTY removes APC before
+/// the renderer can see it.  An inherited RDP/terminal tab can lose
+/// `TERM_PROGRAM`, so requiring that marker would incorrectly fall back to
+/// standard Kitty PNG as seen in the remote Windows session.
+fn should_use_windows_fpasoterm_osc_transport() -> bool {
+    should_use_windows_fpasoterm_osc_transport_for_environment(
+        cfg!(target_os = "windows"),
+        &|name| std::env::var(name).ok(),
+    )
+}
+
+fn should_use_windows_fpasoterm_osc_transport_for_environment<F>(
+    is_windows: bool,
+    environment: &F,
+) -> bool
+where
+    F: Fn(&str) -> Option<String>,
+{
+    is_windows && !native_kitty_is_advertised(environment)
+}
+
+fn native_kitty_is_advertised<F>(environment: &F) -> bool
+where
+    F: Fn(&str) -> Option<String>,
+{
+    environment("KITTY_WINDOW_ID").is_some_and(|value| !value.trim().is_empty())
+        || environment("TERM").is_some_and(|value| value.eq_ignore_ascii_case("xterm-kitty"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_without_native_kitty_markers_uses_fpasoterm_osc() {
+        assert!(should_use_windows_fpasoterm_osc_transport_for_environment(
+            true,
+            &|name| (name == "TERM").then(|| String::from("xterm-256color")),
+        ));
+    }
+
+    #[test]
+    fn native_kitty_markers_keep_the_standard_protocol() {
+        assert!(!should_use_windows_fpasoterm_osc_transport_for_environment(
+            true,
+            &|name| (name == "KITTY_WINDOW_ID").then(|| String::from("42")),
+        ));
+    }
+
+    #[test]
+    fn non_windows_terminals_do_not_use_the_private_osc_bridge() {
+        assert!(!should_use_windows_fpasoterm_osc_transport_for_environment(
+            false,
+            &|name| (name == "TERM").then(|| String::from("xterm-256color")),
+        ));
+    }
 }
 
 impl RenderBackend for SelectedBackend {

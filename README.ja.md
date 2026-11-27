@@ -146,7 +146,7 @@ LLVMは不要です。
 | `auto` | 既定。Kitty、またはbridge対応のfpasotermを検出できれば`kitty`、それ以外は`half-block`を選択します。Windowsで古いfpasotermを検出した場合も`half-block`へfallbackします。 |
 | `half-block` | ANSI truecolorのみを使う可搬性重視のfallbackです。 |
 | `sixel` | SIXEL対応terminal用の216色画像表示です。 |
-| `kitty` | 圧縮済みPNG画像をterminal cellへ配置します。KittyとWindows以外のfpasotermには標準Kitty Graphics Protocol (APC) を使います。Windows fpasotermではConPTYがAPCを破棄するため、zlib圧縮したraw RGBA（`f=32`）をprivate OSC bridgeで送ってCanvasへ直接描画します。debug表示は`fpasoterm-osc-rgba-zlib`です。fpasotermでは非同期描画前にframeを削除しないよう、送信側でのframe retirementを遅延します。 |
+| `kitty` | 圧縮済みPNG画像をterminal cellへ配置します。KittyとWindows以外のfpasotermには標準Kitty Graphics Protocol (APC) を使います。ConPTYはAPCを破棄するため、Windowsで明示的にKittyを選んだ場合は、native Kitty（`KITTY_WINDOW_ID`または`TERM=xterm-kitty`）と確実に判定できる時以外、fpasotermのprivate OSC bridgeを使います。これは`TERM_PROGRAM`を失った復元済みRDP tabにも適用されます。bridgeはzlib圧縮raw RGBA（`f=32`）をCanvasへ直接描画し、debug表示は`fpasoterm-osc-rgba-zlib`です。fpasotermでは非同期描画前にframeを削除しないよう、送信側でのframe retirementを遅延します。 |
 
 ## 操作
 
