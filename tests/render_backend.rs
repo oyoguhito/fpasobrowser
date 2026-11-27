@@ -1,5 +1,6 @@
 use anyhow::Result;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use flate2::read::ZlibDecoder;
 use fpasobrowser::render::{
     kitty::KittyBackend, sixel::SixelBackend, BackendChoice, RenderBackend, RenderSize,
     SelectedBackend, TerminalCellPixels,
@@ -127,11 +128,11 @@ fn fpasoterm_kitty_backend_defers_retiring_unpainted_frames() -> Result<()> {
 }
 
 #[test]
-fn windows_fpasoterm_backend_uses_osc_wrapped_png_when_conpty_discards_kitty_apc() -> Result<()> {
+fn windows_fpasoterm_backend_uses_osc_when_conpty_discards_kitty_apc() -> Result<()> {
     let image = DynamicImage::ImageRgba8(RgbaImage::new(1, 2));
     let backend = KittyBackend::for_windows_fpasoterm();
     let mut output = Vec::new();
-    assert_eq!(backend.transport_label(), "fpasoterm-osc-png");
+    assert_eq!(backend.transport_label(), "fpasoterm-osc-rgba-zlib");
     backend.render(
         &image,
         RenderSize {
@@ -142,15 +143,15 @@ fn windows_fpasoterm_backend_uses_osc_wrapped_png_when_conpty_discards_kitty_apc
     )?;
 
     let output = String::from_utf8(output)?;
-    assert!(output.starts_with("\x1b[H\x1b]777;graphics;v=1;a=T,f=100,t=d,i="));
-    assert!(output.contains(",c=10,r=5,C=1,q=2,m="));
+    assert!(output.starts_with("\x1b[H\x1b]777;graphics;v=1;a=T,f=32,t=d,i="));
+    assert!(output.contains(",c=10,r=5,s=1,v=2,o=z,C=1,q=2,m="));
     assert!(!output.contains("\x1b_G"));
     assert!(output.ends_with("\x1b\\"));
     Ok(())
 }
 
 #[test]
-fn windows_fpasoterm_osc_png_envelopes_stay_below_the_conpty_legacy_limit() -> Result<()> {
+fn windows_fpasoterm_osc_envelopes_stay_below_the_conpty_legacy_limit() -> Result<()> {
     let mut pixels = RgbaImage::new(32, 32);
     for (index, pixel) in pixels.pixels_mut().enumerate() {
         let value = u8::try_from((index * 73) % 251).expect("value is within a byte");
@@ -161,7 +162,7 @@ fn windows_fpasoterm_osc_png_envelopes_stay_below_the_conpty_legacy_limit() -> R
     }
     let expected_pixels = pixels
         .pixels()
-        .map(|pixel| image::Rgba([pixel[0], pixel[1], pixel[2], u8::MAX]))
+        .flat_map(|pixel| [pixel[0], pixel[1], pixel[2], u8::MAX])
         .collect::<Vec<_>>();
     let mut output = Vec::new();
     KittyBackend::for_windows_fpasoterm().render(
@@ -199,15 +200,10 @@ fn windows_fpasoterm_osc_png_envelopes_stay_below_the_conpty_legacy_limit() -> R
                 .1
         })
         .collect::<String>();
-    let png = STANDARD.decode(encoded)?;
-    assert_eq!(
-        image::load_from_memory(&png)?
-            .to_rgba8()
-            .pixels()
-            .copied()
-            .collect::<Vec<_>>(),
-        expected_pixels
-    );
+    let compressed = STANDARD.decode(encoded)?;
+    let mut decoded = Vec::new();
+    ZlibDecoder::new(compressed.as_slice()).read_to_end(&mut decoded)?;
+    assert_eq!(decoded, expected_pixels);
     Ok(())
 }
 
