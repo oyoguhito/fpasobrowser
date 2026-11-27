@@ -109,8 +109,10 @@ modifierを付けます。RDPやterminalがphysical chordを横取りする場�
 Kitty Graphics Protocolが使えるKitty、またはgraphics bridgeをadvertiseするfpasotermでは、
 引数なしの`auto`が`kitty`を選びます。Windows版fpasotermではConPTYがKittyのAPCを
 破棄するため、current fpasotermがchild processへ通知する`osc-v1` bridgeを使います。
-古いfpasotermでは黒い画面を出さず`half-block`へfallbackします。自動検出されない
-対応terminalでは、明示的に指定できます。
+`auto`では、この通知が無い古いfpasotermを黒い画面にせず`half-block`へfallbackします。
+一方、`--backend kitty`は明示指定を尊重し、通知を継承できていない既存tab/RDP sessionでも
+Windows用OSC bridgeを試行します。imageが出ない場合はfpasotermを更新・完全再起動してから
+再試行してください。
 
 ```powershell
 .\fpasobrowser.cmd --backend kitty --debug

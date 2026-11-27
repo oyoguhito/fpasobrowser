@@ -282,10 +282,15 @@ where
     F: Fn(&str) -> Option<String>,
 {
     match requested {
+        // An explicit Kitty request is an intentional diagnostic/compatibility
+        // choice. Keep auto detection conservative for an old Windows
+        // fpasoterm, but do not silently replace the requested backend: the
+        // current fpasoterm renderer understands the OSC bridge even when a
+        // shell inherited without its capability variable.
         Some(BackendChoice::Kitty) if legacy_windows_fpasoterm(&environment) => BackendSelection {
-            choice: BackendChoice::HalfBlock,
+            choice: BackendChoice::Kitty,
             initial_activity: Some(String::from(
-                "Windows fpasoterm graphics bridge is unavailable; using half-block (update fpasoterm)",
+                "Windows fpasoterm graphics bridge is not advertised; forcing Kitty bridge (update fpasoterm if no image appears)",
             )),
         },
         Some(choice @ (BackendChoice::HalfBlock | BackendChoice::Sixel | BackendChoice::Kitty)) => {

@@ -110,7 +110,13 @@ impl SelectedBackend {
                 None => sixel::SixelBackend::new(),
             }),
             BackendChoice::Kitty => Self::Kitty(if fpasoterm_is_terminal() {
-                if cfg!(target_os = "windows") && fpasoterm_osc_transport_is_available() {
+                // `--backend kitty` is an explicit request. On Windows the
+                // only viable fpasoterm wire path is its OSC bridge, and the
+                // shell capability variable can be absent when an existing
+                // terminal/tab was inherited across RDP. Auto selection has
+                // already guarded that case; once Kitty is selected, use the
+                // bridge rather than sending APC (which ConPTY drops).
+                if cfg!(target_os = "windows") {
                     kitty::KittyBackend::for_windows_fpasoterm()
                 } else {
                     kitty::KittyBackend::for_fpasoterm()
@@ -137,11 +143,6 @@ impl SelectedBackend {
 
 fn fpasoterm_is_terminal() -> bool {
     std::env::var("TERM_PROGRAM").is_ok_and(|value| value.eq_ignore_ascii_case("fpasoterm"))
-}
-
-fn fpasoterm_osc_transport_is_available() -> bool {
-    std::env::var("FPASOTERM_GRAPHICS_TRANSPORT")
-        .is_ok_and(|value| value.eq_ignore_ascii_case("osc-v1"))
 }
 
 impl RenderBackend for SelectedBackend {
