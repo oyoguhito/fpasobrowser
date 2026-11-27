@@ -119,7 +119,7 @@ Windows用OSC bridgeを試行します。imageが出ない場合はfpasotermを�
 ```
 
 Windows上のfpasoterm内では、`--debug`に
-`backend=kitty transport=fpasoterm-osc-rgba-zlib`が出ることを確認してください。fpasotermの
+`backend=kitty transport=fpasoterm-osc-png`が出ることを確認してください。fpasotermの
 Diagnosticsを`graphics`でfilterすると、最初のframeで
 `fpasoterm graphics transfer received`と`fpasoterm graphics rendered`が出ます。前者が
 出ない場合はfpasotermもこのbridge対応版へ更新してください。
@@ -131,8 +131,8 @@ verification queryも同じ表示で追跡できます。通常起動でこの�
 `--debug-overlay`を指定します。normal modeで`d`または`D`を押すと表示・非表示を切替できます。
 
 Windows ConPTYの長いOSC sequenceが壊れる既知の経路を避けるため、bridgeはpayloadを短い
-OSC packetへ分割して送ります。bridgeではWebView2のPNG合成を通さず、zlib圧縮したraw RGBA
-（`format=32`、`compression=z`）をfpasotermのCanvasへ直接描画します。成功時は
+OSC packetへ分割して送ります。bridgeは不透明PNG（`format=100`）をそのまま渡し、fpasotermが
+接続済み`<img>`要素で描画します。RDPで黒くなるraw-RGBA Canvas合成を通りません。成功時は
 `paint=raw-rgba-putImageData`が表示されます。
 
 Windows release archiveを展開した場合は、同じdirectoryの`fpasobrowser.cmd`から起動します。
@@ -146,7 +146,7 @@ LLVMは不要です。
 | `auto` | 既定。Kitty、またはbridge対応のfpasotermを検出できれば`kitty`、それ以外は`half-block`を選択します。Windowsで古いfpasotermを検出した場合も`half-block`へfallbackします。 |
 | `half-block` | ANSI truecolorのみを使う可搬性重視のfallbackです。 |
 | `sixel` | SIXEL対応terminal用の216色画像表示です。 |
-| `kitty` | 圧縮済みPNG画像をterminal cellへ配置します。KittyとWindows以外のfpasotermには標準Kitty Graphics Protocol (APC) を使います。ConPTYはAPCを破棄するため、Windowsで明示的にKittyを選んだ場合は、native Kitty（`KITTY_WINDOW_ID`または`TERM=xterm-kitty`）と確実に判定できる時以外、fpasotermのprivate OSC bridgeを使います。これは`TERM_PROGRAM`を失った復元済みRDP tabにも適用されます。bridgeはzlib圧縮raw RGBA（`f=32`）をCanvasへ直接描画し、debug表示は`fpasoterm-osc-rgba-zlib`です。fpasotermでは非同期描画前にframeを削除しないよう、送信側でのframe retirementを遅延します。 |
+| `kitty` | 圧縮済みPNG画像をterminal cellへ配置します。KittyとWindows以外のfpasotermには標準Kitty Graphics Protocol (APC) を使います。ConPTYはAPCを破棄するため、Windowsで明示的にKittyを選んだ場合は、native Kitty（`KITTY_WINDOW_ID`または`TERM=xterm-kitty`）と確実に判定できる時以外、fpasotermのprivate OSC bridgeを使います。これは`TERM_PROGRAM`を失った復元済みRDP tabにも適用されます。bridgeは不透明PNG（`f=100`）を接続済み`<img>`要素で描画してRDPで黒くなるraw-RGBA Canvas合成を避け、debug表示は`fpasoterm-osc-png`です。fpasotermでは非同期描画前にframeを削除しないよう、送信側でのframe retirementを遅延します。 |
 
 ## 操作
 
