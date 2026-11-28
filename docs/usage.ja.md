@@ -63,6 +63,9 @@ build済みbinaryも`fpasobrowser --doctor`に対応します。これはコピ�
 `POST engine key Enter`はembedded browserへ送った要求、対応する`RECV`はreply、`TIMEOUT`は
 app側の待機切れです。screenshot、tab情報、verification queryも表示します。画面内timelineだけを
 有効にするには`--debug-overlay`を指定します。normal modeで`d`または`D`を押すと表示を切替できます。
+表示にはbuild commit、backend/transport、Windows fpasoterm IPC bridgeの状態を含みます。endpointとtokenの値は
+表示しません。normal modeの`C`は、URLとbridge capabilityをredactしたsupport reportをOSC 52 clipboardへcopyします。
+issueへの貼付にはこのreportを使ってください。
 
 ## Windows native: source buildの前提条件
 

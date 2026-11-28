@@ -453,6 +453,7 @@ Controls:
 - [Architecture](docs/architecture.en.md) / [アーキテクチャ](docs/architecture.ja.md)
 - [Processing flows](docs/flow.en.md) / [処理フロー](docs/flow.ja.md)
 - [Testing](docs/testing.en.md) / [テスト](docs/testing.ja.md)
+- [Reporting bugs](CONTRIBUTING.md)
 
 ## Current limits
 

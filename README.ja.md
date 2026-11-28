@@ -127,7 +127,10 @@ Windows上のcurrent fpasoterm内では、`--debug`に
 operation timelineを表示します。`POST engine click` / `POST engine key Enter`はbrowserへの
 要求送信、対応する`RECV`はreply、`TIMEOUT`はapp側の待機切れです。screenshot、tab情報、
 verification queryも同じ表示で追跡できます。通常起動でこの表示だけを使うには
-`--debug-overlay`を指定します。normal modeで`d`または`D`を押すと表示・非表示を切替できます。
+`--debug-overlay`を指定します。normal modeで`d`または`D`を押すと表示・非表示を切替できます。overlayには
+build commit、選択済みbackend/transport、Windows fpasoterm IPC bridgeの安全な状態（endpoint/token自体は非表示）も
+表示されます。normal modeの`C`はURLとbridge capabilityをredactしたsupport reportをOSC 52 clipboardへcopyします。
+そのままissueへpasteできます。
 
 Windows release archiveを展開した場合は、同じdirectoryの`fpasobrowser.cmd`から起動します。
 archiveには`fpasobrowser.exe`、`libEGL.dll`、`libGLESv2.dll`が含まれるため、Cargo、Python、
@@ -152,6 +155,8 @@ LLVMは不要です。
 - `{` / `}`: tab切替
 - `x`: active tabを閉じる（最後のtabは維持）
 - `?`: help
+- `d` / `D`: DEVTOOLSとsafe graphics diagnosticsを表示・非表示
+- `C`: redact済みsupport reportをclipboardへcopy
 - `q` または `Ctrl+Q`: 終了
 
 formへ入力する前は`i`でinput modeに入り、`Esc`でnormal modeへ戻ります。
@@ -163,6 +168,7 @@ formへ入力する前は`i`でinput modeに入り、`Esc`でnormal modeへ戻�
 - [処理フロー](docs/flow.ja.md)
 - [テスト](docs/testing.ja.md)
 - [Servo PoC](docs/servo-poc.ja.md)
+- [不具合報告](CONTRIBUTING.md)
 
 ## 現在の制限
 

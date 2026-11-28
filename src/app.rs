@@ -3,7 +3,10 @@ use crate::{
         BrowserClient, BrowserOptions, CloseTabOutcome, LinkHintOutcome, PageState, TabInfo,
     },
     input::{self, BrowserModifier, BrowserModifiers, Command, InputMode},
-    render::{BackendChoice, RenderBackend, SelectedBackend, TerminalCellPixels},
+    render::{
+        kitty::fpasoterm_graphics_bridge_status, BackendChoice, RenderBackend, SelectedBackend,
+        TerminalCellPixels,
+    },
     terminal::{Terminal, UiChrome},
     version_info,
 };
@@ -102,6 +105,8 @@ const DEFAULT_ACTIVITY_MESSAGE: &str =
     "?:help i:input g/t:URL [/] back/forward Ctrl/Alt/Meta toolbar arms next key +/- zoom";
 const DIAGNOSTIC_HISTORY_LIMIT: usize = 24;
 const DIAGNOSTIC_OVERLAY_ROWS: u16 = 10;
+const SUPPORT_REPORT_TIMELINE_LIMIT: usize = 12;
+const SUPPORT_REPORT_LINE_LIMIT: usize = 240;
 
 #[derive(Debug, Clone, Default)]
 pub struct AppOptions {
@@ -180,6 +185,99 @@ impl OperationTrace {
             .rev()
             .map(String::as_str)
     }
+
+    fn safe_recent(&self, limit: usize) -> impl Iterator<Item = String> + '_ {
+        self.recent(limit).map(|entry| {
+            truncate_report_line(&redact_url_like_segments(entry), SUPPORT_REPORT_LINE_LIMIT)
+        })
+    }
+}
+
+/// Keep a support bundle useful without copying a page URL (which can contain
+/// a search term, fragment, or access token) to the clipboard automatically.
+fn redact_url_like_segments(value: &str) -> String {
+    const URL_PREFIXES: [&str; 4] = ["https://", "http://", "file:", "data:"];
+    let mut remaining = value;
+    let mut output = String::with_capacity(value.len());
+    loop {
+        let next = URL_PREFIXES
+            .iter()
+            .filter_map(|prefix| remaining.find(prefix).map(|position| (position, *prefix)))
+            .min_by_key(|(position, _)| *position);
+        let Some((start, _)) = next else {
+            output.push_str(remaining);
+            break;
+        };
+        output.push_str(&remaining[..start]);
+        output.push_str("<URL redacted>");
+        let after_url = &remaining[start..];
+        let end = after_url
+            .find(char::is_whitespace)
+            .unwrap_or(after_url.len());
+        remaining = &after_url[end..];
+    }
+    output
+}
+
+fn truncate_report_line(value: &str, maximum: usize) -> String {
+    let mut result = value.chars().take(maximum).collect::<String>();
+    if value.chars().count() > maximum && maximum > 1 {
+        result.pop();
+        result.push('…');
+    }
+    result
+}
+
+fn terminal_parent_label() -> &'static str {
+    if std::env::var("TERM_PROGRAM")
+        .ok()
+        .is_some_and(|value| value.eq_ignore_ascii_case("fpasoterm"))
+    {
+        "fpasoterm detected"
+    } else {
+        "fpasoterm not advertised"
+    }
+}
+
+fn support_report(
+    renderer: &SelectedBackend,
+    input_mode: InputMode,
+    browser_connected: bool,
+    diagnostics: &OperationTrace,
+) -> String {
+    let mut report = format!(
+        "fpasobrowser support report\nversion: {}\nplatform: {}-{}\nrenderer: backend={} transport={}\nterminal parent: {}\nfpasoterm graphics bridge: {}\nbrowser connection: {}\ninput mode: {:?}\nprivacy: graphics endpoint/token and page URLs are redacted\nrecent operation timeline:\n",
+        version_info(),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        renderer.name(),
+        renderer.transport_label(),
+        terminal_parent_label(),
+        fpasoterm_graphics_bridge_status().report_label(),
+        if browser_connected { "connected" } else { "disconnected" },
+        input_mode,
+    );
+    for entry in diagnostics.safe_recent(SUPPORT_REPORT_TIMELINE_LIMIT) {
+        report.push_str("- ");
+        report.push_str(&entry);
+        report.push('\n');
+    }
+    report
+}
+
+fn copy_support_report(
+    terminal: &mut Terminal,
+    renderer: &SelectedBackend,
+    input_mode: InputMode,
+    browser_connected: bool,
+    diagnostics: &OperationTrace,
+) -> Result<()> {
+    terminal.copy_osc52(&support_report(
+        renderer,
+        input_mode,
+        browser_connected,
+        diagnostics,
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -675,6 +773,28 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                         Some(&diagnostics),
                     )?;
                 }
+                Command::CopySupportReport => {
+                    diagnostics.record("ACTION copy safe support report");
+                    message = match copy_support_report(
+                        &mut terminal,
+                        &renderer,
+                        input_mode,
+                        false,
+                        &diagnostics,
+                    ) {
+                        Ok(()) => String::from(
+                            "safe support report copied; paste it into an fpasobrowser issue",
+                        ),
+                        Err(error) => format!("copy support report failed: {error}"),
+                    };
+                    draw_disconnected(
+                        &mut terminal,
+                        &renderer,
+                        size,
+                        &message,
+                        Some(&diagnostics),
+                    )?;
+                }
                 Command::OpenExternal | Command::OpenVerification => {
                     match open_in_regular_browser(state.url.as_str()) {
                         Ok(()) => {
@@ -946,6 +1066,26 @@ async fn run_once(url: Url, backend_choice: BackendChoice, options: AppOptions) 
                 // has not changed.
                 presentation = None;
                 needs_redraw = true;
+            }
+            Command::CopySupportReport => {
+                diagnostics.record("ACTION copy safe support report");
+                message = match copy_support_report(
+                    &mut terminal,
+                    &renderer,
+                    input_mode,
+                    browser_connected,
+                    &diagnostics,
+                ) {
+                    Ok(()) => String::from(
+                        "safe support report copied; paste it into an fpasobrowser issue",
+                    ),
+                    Err(error) => format!("copy support report failed: {error}"),
+                };
+                if diagnostics_visible {
+                    draw_diagnostics_overlay(&mut terminal, size, &renderer, &diagnostics)?;
+                }
+                terminal.status(size.rows, &message)?;
+                terminal.flush()?;
             }
             Command::Help => {
                 show_help = !show_help;
@@ -2111,7 +2251,7 @@ fn draw_disconnected(
         )?;
     }
     if let Some(diagnostics) = diagnostics {
-        draw_diagnostics_overlay(terminal, size, diagnostics)?;
+        draw_diagnostics_overlay(terminal, size, renderer, diagnostics)?;
     }
     terminal.flush()?;
     Ok(())
@@ -2274,7 +2414,7 @@ async fn redraw(
         *presentation = Some(fingerprint);
     }
     if options.diagnostics_visible {
-        draw_diagnostics_overlay(terminal, size, diagnostics)?;
+        draw_diagnostics_overlay(terminal, size, renderer, diagnostics)?;
     }
     let active_tab_status = active_tab_status(&tab_info, state);
     let status_message = compose_activity_status(
@@ -2330,6 +2470,7 @@ async fn redraw(
 fn draw_diagnostics_overlay(
     terminal: &mut Terminal,
     size: crate::render::RenderSize,
+    renderer: &SelectedBackend,
     diagnostics: &OperationTrace,
 ) -> Result<()> {
     let rows = terminal.diagnostics_rows().min(DIAGNOSTIC_OVERLAY_ROWS);
@@ -2340,13 +2481,22 @@ fn draw_diagnostics_overlay(
     let columns = usize::from(size.columns);
     let mut lines = Vec::with_capacity(usize::from(rows));
     lines.push(String::from(
-        "FPASOBROWSER DEVTOOLS  POST/RECV timeline  [d/D: hide]",
+        "FPASOBROWSER DEVTOOLS  [d/D: hide] [C: copy safe support report]",
     ));
-    lines.extend(
-        diagnostics
-            .recent(usize::from(rows.saturating_sub(1)))
-            .map(ToOwned::to_owned),
-    );
+    lines.push(version_info().to_string());
+    lines.push(format!(
+        "renderer: backend={} transport={}",
+        renderer.name(),
+        renderer.transport_label()
+    ));
+    lines.push(format!(
+        "fpasoterm IPC: {}",
+        fpasoterm_graphics_bridge_status().report_label()
+    ));
+    lines.push(String::from(
+        "timeline: page URLs and bridge endpoint/token are never copied",
+    ));
+    lines.extend(diagnostics.safe_recent(usize::from(rows.saturating_sub(lines.len() as u16))));
 
     for offset in 0..rows {
         let text = lines.get(usize::from(offset)).map_or("", String::as_str);
@@ -2776,7 +2926,7 @@ fn draw_help_panel(terminal: &mut Terminal, size: crate::render::RenderSize) -> 
         "Mouse toolbar: [B]/[F] history [R] reload [URL] go [Ctrl]/[Alt]/[Meta] arm next page key [-]/[+]/[100] zoom",
         "Keys: q/Ctrl+Q quit | Esc blur/previous tab | r/R reload | g URL | b/B or [ back | F or ] forward | t new tab | x close tab",
         "Tabs: {/}/Ctrl+Tab switch | v/V open browser for verification | f numbered link hints",
-        "Diagnostics: --debug or --debug-overlay shows POST/RECV timeline; d/D toggles it in normal mode",
+        "Diagnostics: d/D shows build, backend/transport, safe fpasoterm IPC state, and timeline; C copies a redacted issue report",
         "Tabs: click a visible label to switch; click its × to close (the final tab is kept)",
         "Page: click page | wheel scroll | j/k or Up/Down scroll | Tab/Shift+Tab focus | Enter activate | f link hints",
         "Input: i enters input mode; the page focus ring is used when available, otherwise cyan marks focus; Tab/Shift+Tab moves it; Esc blurs",
@@ -2800,11 +2950,12 @@ mod tests {
         active_tab_status, compose_activity_status, format_hover_status,
         format_link_hint_activation, frame_debug_summary, loading_indicator, loading_redraw_delay,
         normalize_primary_mouse_command, open_in_regular_browser, presentation_fingerprint,
-        schedule_scroll_redraw, should_clear_before_frame, tab_strip_row, tab_strip_target,
-        tab_strip_text, toolbar_command, toolbar_row, toolbar_text, working_status, TabStripAction,
+        redact_url_like_segments, schedule_scroll_redraw, should_clear_before_frame,
+        support_report, tab_strip_row, tab_strip_target, tab_strip_text, toolbar_command,
+        toolbar_row, toolbar_text, working_status, OperationTrace, TabStripAction,
     };
     use crate::browser::{HoverOutcome, LinkHintOutcome, TabInfo};
-    use crate::input::{BrowserModifier, BrowserModifiers, Command};
+    use crate::input::{BrowserModifier, BrowserModifiers, Command, InputMode};
     use crate::render::{BackendChoice, RenderSize, SelectedBackend};
     use image::{DynamicImage, Rgba, RgbaImage};
     use std::time::Instant;
@@ -2828,6 +2979,32 @@ mod tests {
                 href: Some(String::from("https://example.test/\u{1b}[2J")),
             }),
             "hover link: https://example.test/[2J"
+        );
+    }
+
+    #[test]
+    fn support_report_redacts_page_urls_from_the_timeline() {
+        let mut diagnostics = OperationTrace::default();
+        diagnostics.record("POST engine launch url=https://example.test/path?token=secret");
+        let report = support_report(
+            &SelectedBackend::from_choice(BackendChoice::HalfBlock),
+            InputMode::Normal,
+            true,
+            &diagnostics,
+        );
+
+        assert!(report.contains("fpasobrowser support report"));
+        assert!(report.contains("renderer: backend=half-block transport=ansi-half-block"));
+        assert!(report.contains("<URL redacted>"));
+        assert!(!report.contains("example.test"));
+        assert!(!report.contains("token=secret"));
+    }
+
+    #[test]
+    fn report_url_redaction_handles_every_supported_url_scheme() {
+        assert_eq!(
+            redact_url_like_segments("open https://example.test/a?q=1 then file:///tmp/page.html"),
+            "open <URL redacted> then <URL redacted>"
         );
     }
 

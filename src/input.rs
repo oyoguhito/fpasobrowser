@@ -54,6 +54,7 @@ pub enum Command {
     PreviousTab,
     Help,
     ToggleDiagnostics,
+    CopySupportReport,
     InputMode,
     GoToUrl,
     LinkHints,
@@ -206,6 +207,9 @@ fn key_command(key: KeyEvent, mode: InputMode) -> Result<Command> {
         KeyCode::Char('}') => Command::NextTab,
         KeyCode::Char('?') => Command::Help,
         KeyCode::Char('d') | KeyCode::Char('D') => Command::ToggleDiagnostics,
+        // Copying is deliberate and available only in normal mode: the
+        // generated report redacts capability values before emitting OSC 52.
+        KeyCode::Char('C') => Command::CopySupportReport,
         KeyCode::Char('i') => Command::InputMode,
         KeyCode::Char('g') => Command::GoToUrl,
         KeyCode::Char('f') => Command::LinkHints,
@@ -312,6 +316,14 @@ mod tests {
         assert_eq!(
             key_command(key(KeyCode::Char('d')), InputMode::Normal).expect("read key"),
             Command::ToggleDiagnostics
+        );
+    }
+
+    #[test]
+    fn normal_mode_copies_a_safe_support_report() {
+        assert_eq!(
+            key_command(key(KeyCode::Char('C')), InputMode::Normal).expect("read key"),
+            Command::CopySupportReport
         );
     }
 

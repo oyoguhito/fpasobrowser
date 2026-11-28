@@ -24,6 +24,88 @@ const FPASOTERM_IPC_MAGIC: [u8; 8] = *b"FPTGFX1\0";
 const FPASOTERM_IPC_TOKEN_BYTES: usize = 32;
 const FPASOTERM_IPC_TIMEOUT: Duration = Duration::from_millis(750);
 
+/// Safe, value-free readiness state for the Windows fpasoterm graphics
+/// bridge.  In particular, it never exposes the random loopback endpoint or
+/// the per-terminal capability token in an issue report or terminal overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FpasotermGraphicsBridgeStatus {
+    NotRequired,
+    Ready,
+    TransportMissing,
+    TransportUnsupported,
+    EndpointMissing,
+    EndpointInvalid,
+    EndpointNotLoopback,
+    TokenMissing,
+    TokenInvalid,
+}
+
+impl FpasotermGraphicsBridgeStatus {
+    #[must_use]
+    pub const fn report_label(self) -> &'static str {
+        match self {
+            Self::NotRequired => "not required on this platform",
+            Self::Ready => "ready (ipc-v1; endpoint and token redacted)",
+            Self::TransportMissing => "unavailable: transport capability is missing",
+            Self::TransportUnsupported => "unavailable: transport capability is not ipc-v1",
+            Self::EndpointMissing => "unavailable: endpoint capability is missing",
+            Self::EndpointInvalid => "unavailable: endpoint capability is invalid",
+            Self::EndpointNotLoopback => "unavailable: endpoint is not loopback",
+            Self::TokenMissing => "unavailable: token capability is missing",
+            Self::TokenInvalid => "unavailable: token capability is invalid",
+        }
+    }
+}
+
+/// Describe whether the current process inherited a usable fpasoterm bridge,
+/// without returning any sensitive capability value.
+#[must_use]
+pub fn fpasoterm_graphics_bridge_status() -> FpasotermGraphicsBridgeStatus {
+    fpasoterm_graphics_bridge_status_in_environment(cfg!(target_os = "windows"), &|name| {
+        std::env::var(name).ok()
+    })
+}
+
+fn fpasoterm_graphics_bridge_status_in_environment<F>(
+    is_windows: bool,
+    environment: &F,
+) -> FpasotermGraphicsBridgeStatus
+where
+    F: Fn(&str) -> Option<String>,
+{
+    if !is_windows {
+        return FpasotermGraphicsBridgeStatus::NotRequired;
+    }
+    match environment("FPASOTERM_GRAPHICS_TRANSPORT") {
+        None => return FpasotermGraphicsBridgeStatus::TransportMissing,
+        Some(value) if !value.eq_ignore_ascii_case("ipc-v1") => {
+            return FpasotermGraphicsBridgeStatus::TransportUnsupported;
+        }
+        Some(_) => {}
+    }
+    let endpoint: SocketAddr = match environment("FPASOTERM_GRAPHICS_ENDPOINT") {
+        None => return FpasotermGraphicsBridgeStatus::EndpointMissing,
+        Some(value) => match value.parse() {
+            Ok(endpoint) => endpoint,
+            Err(_) => return FpasotermGraphicsBridgeStatus::EndpointInvalid,
+        },
+    };
+    if !matches!(endpoint.ip(), IpAddr::V4(address) if address.is_loopback()) {
+        return FpasotermGraphicsBridgeStatus::EndpointNotLoopback;
+    }
+    let token = match environment("FPASOTERM_GRAPHICS_TOKEN") {
+        None => return FpasotermGraphicsBridgeStatus::TokenMissing,
+        Some(value) => match STANDARD.decode(value) {
+            Ok(value) => value,
+            Err(_) => return FpasotermGraphicsBridgeStatus::TokenInvalid,
+        },
+    };
+    if token.len() != FPASOTERM_IPC_TOKEN_BYTES {
+        return FpasotermGraphicsBridgeStatus::TokenInvalid;
+    }
+    FpasotermGraphicsBridgeStatus::Ready
+}
+
 /// Standard Kitty APC is the normal transport. `FpasotermOsc` remains only for
 /// compatibility with experimental older fpasoterm builds; current Windows
 /// fpasoterm uses `FpasotermIpc` because ConPTY can consume both APC and OSC.
@@ -45,7 +127,7 @@ struct FpasotermIpcBridge {
 
 impl FpasotermIpcBridge {
     fn from_environment() -> Option<Self> {
-        if !cfg!(target_os = "windows") {
+        if fpasoterm_graphics_bridge_status() != FpasotermGraphicsBridgeStatus::Ready {
             return None;
         }
         let endpoint: SocketAddr = std::env::var("FPASOTERM_GRAPHICS_ENDPOINT")
@@ -405,6 +487,35 @@ fn opaque_terminal_rgba(image: &DynamicImage) -> RgbaImage {
 mod tests {
     use super::*;
     use std::{net::TcpListener, thread};
+
+    #[test]
+    fn graphics_bridge_report_redacts_a_ready_capability() {
+        let token = STANDARD.encode([7_u8; FPASOTERM_IPC_TOKEN_BYTES]);
+        let status = fpasoterm_graphics_bridge_status_in_environment(true, &|name| match name {
+            "FPASOTERM_GRAPHICS_TRANSPORT" => Some(String::from("ipc-v1")),
+            "FPASOTERM_GRAPHICS_ENDPOINT" => Some(String::from("127.0.0.1:45678")),
+            "FPASOTERM_GRAPHICS_TOKEN" => Some(token.clone()),
+            _ => None,
+        });
+
+        assert_eq!(status, FpasotermGraphicsBridgeStatus::Ready);
+        assert_eq!(
+            status.report_label(),
+            "ready (ipc-v1; endpoint and token redacted)"
+        );
+        assert!(!status.report_label().contains("45678"));
+        assert!(!status.report_label().contains(&token));
+    }
+
+    #[test]
+    fn graphics_bridge_report_explains_missing_inheritance() {
+        let status = fpasoterm_graphics_bridge_status_in_environment(true, &|_| None);
+        assert_eq!(status, FpasotermGraphicsBridgeStatus::TransportMissing);
+        assert_eq!(
+            status.report_label(),
+            "unavailable: transport capability is missing"
+        );
+    }
 
     #[test]
     fn fpasoterm_ipc_bridge_sends_a_bounded_authenticated_png_frame() {

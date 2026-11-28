@@ -1,5 +1,6 @@
 use crate::render::RenderSize;
 use anyhow::Result;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use clap::ValueEnum;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
@@ -12,6 +13,8 @@ use crossterm::{
     },
 };
 use std::io::{stdout, Stdout, Write};
+
+const OSC52_MAX_TEXT_BYTES: usize = 64 * 1024;
 
 /// Terminal rows reserved for fpasobrowser's own controls rather than the
 /// rendered browser frame.
@@ -146,6 +149,21 @@ impl Terminal {
     }
 
     pub fn flush(&mut self) -> Result<()> {
+        self.stdout.flush()?;
+        Ok(())
+    }
+
+    /// Copy explicitly requested, application-generated support text through
+    /// the standard OSC 52 clipboard channel.  This is intentionally not
+    /// available to page content, and callers must redact sensitive values
+    /// before invoking it.
+    pub fn copy_osc52(&mut self, text: &str) -> Result<()> {
+        anyhow::ensure!(
+            text.len() <= OSC52_MAX_TEXT_BYTES,
+            "support report is too large for OSC 52 clipboard transfer"
+        );
+        let encoded = STANDARD.encode(text.as_bytes());
+        write!(self.stdout, "\x1b]52;c;{encoded}\x07")?;
         self.stdout.flush()?;
         Ok(())
     }
