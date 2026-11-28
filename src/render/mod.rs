@@ -72,6 +72,15 @@ pub trait RenderBackend {
         true
     }
 
+    /// A safe, sender-side status for developer overlays and issue reports.
+    ///
+    /// Terminal image protocols are write-only: a renderer can report the
+    /// commands it emitted, but it cannot infer that a multiplexer forwarded
+    /// them or that the eventual image receiver painted them.
+    fn sender_diagnostic_summary(&self) -> String {
+        String::from("sender telemetry unavailable for this renderer")
+    }
+
     fn render(&self, image: &DynamicImage, size: RenderSize, writer: &mut dyn Write) -> Result<()>;
 
     fn cleanup(&self, _writer: &mut dyn Write) -> Result<()> {
@@ -197,6 +206,14 @@ impl RenderBackend for SelectedBackend {
             Self::HalfBlock(backend) => backend.clears_terminal_before_frame(),
             Self::Sixel(backend) => backend.clears_terminal_before_frame(),
             Self::Kitty(backend) => backend.clears_terminal_before_frame(),
+        }
+    }
+
+    fn sender_diagnostic_summary(&self) -> String {
+        match self {
+            Self::HalfBlock(backend) => backend.sender_diagnostic_summary(),
+            Self::Sixel(backend) => backend.sender_diagnostic_summary(),
+            Self::Kitty(backend) => backend.sender_diagnostic_summary(),
         }
     }
 

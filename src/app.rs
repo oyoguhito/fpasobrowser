@@ -246,12 +246,13 @@ fn support_report(
     diagnostics: &OperationTrace,
 ) -> String {
     let mut report = format!(
-        "fpasobrowser support report\nversion: {}\nplatform: {}-{}\nrenderer: backend={} transport={}\nterminal parent: {}\nfpasoterm graphics bridge: {}\nbrowser connection: {}\ninput mode: {:?}\nprivacy: graphics endpoint/token and page URLs are redacted\nrecent operation timeline:\n",
+        "fpasobrowser support report\nversion: {}\nplatform: {}-{}\nrenderer: backend={} transport={}\nrenderer sender: {}\nterminal parent: {}\nfpasoterm graphics bridge: {}\nbrowser connection: {}\ninput mode: {:?}\nprivacy: graphics endpoint/token and page URLs are redacted\nreceiver note: sender telemetry is not a Herdr or terminal receiver acknowledgement\nrecent operation timeline:\n",
         version_info(),
         std::env::consts::OS,
         std::env::consts::ARCH,
         renderer.name(),
         renderer.transport_label(),
+        renderer.sender_diagnostic_summary(),
         terminal_parent_label(),
         fpasoterm_graphics_bridge_status().report_label(),
         if browser_connected { "connected" } else { "disconnected" },
@@ -2393,6 +2394,10 @@ async fn redraw(
         }
         queue!(terminal.writer(), MoveTo(0, 0))?;
         renderer.render(&image, size, terminal.writer())?;
+        diagnostics.record(format!(
+            "PRESENT renderer sender {}",
+            renderer.sender_diagnostic_summary()
+        ));
         if options.debug {
             let summary = debug_summary.expect("debug frame summary is available");
             eprintln!(
@@ -2488,6 +2493,10 @@ fn draw_diagnostics_overlay(
         "renderer: backend={} transport={}",
         renderer.name(),
         renderer.transport_label()
+    ));
+    lines.push(format!("sender: {}", renderer.sender_diagnostic_summary()));
+    lines.push(String::from(
+        "receiver: unobservable through a multiplexer; this is sender-only",
     ));
     lines.push(format!(
         "fpasoterm IPC: {}",
@@ -2995,6 +3004,10 @@ mod tests {
 
         assert!(report.contains("fpasobrowser support report"));
         assert!(report.contains("renderer: backend=half-block transport=ansi-half-block"));
+        assert!(report.contains("renderer sender: sender telemetry unavailable for this renderer"));
+        assert!(report.contains(
+            "receiver note: sender telemetry is not a Herdr or terminal receiver acknowledgement"
+        ));
         assert!(report.contains("<URL redacted>"));
         assert!(!report.contains("example.test"));
         assert!(!report.contains("token=secret"));

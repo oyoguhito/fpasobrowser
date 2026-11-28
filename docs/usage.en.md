@@ -70,10 +70,13 @@ Enter` identify requests sent to the embedded browser; the matching `RECV`
 line is its reply and `TIMEOUT` is an application-side wait expiry. Screenshot,
 tab-info, and verification queries are included. Use `--debug-overlay` when
 only this visible timeline is wanted, and press `d` or `D` in normal mode to toggle
-it. The overlay includes the build commit, selected backend/transport, and a safe
-Windows fpasoterm IPC bridge state; it never displays the bridge endpoint or token.
-Press `C` in normal mode to copy a redacted support report through OSC 52, ready to
-paste into an issue.
+it. The overlay includes the build commit, selected backend/transport, safe
+Windows fpasoterm IPC bridge state, and Kitty **sender** counters (frames and
+delete commands emitted by this process); it never displays the bridge endpoint
+or token. Sender counters deliberately say that receiver acknowledgement is
+unavailable: they can prove the browser wrote a frame, not that Herdr forwarded
+it or that the terminal painted it. Press `C` in normal mode to copy the same
+redacted support report through OSC 52, ready to paste into an issue.
 
 ## Windows native: source-build prerequisites
 

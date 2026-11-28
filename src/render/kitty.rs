@@ -312,6 +312,13 @@ pub struct KittyBackend {
     last_render_size: Mutex<Option<RenderSize>>,
     next_image_id: AtomicU32,
     next_placement_id: AtomicU32,
+    /// Successful complete frame submissions from this browser process.
+    emitted_frame_count: AtomicU32,
+    /// Successful Kitty/fpasoterm delete commands sent by this process.
+    emitted_delete_count: AtomicU32,
+    /// Deletes deliberately sent before a replacement for fpasoterm's
+    /// deferred-retirement receiver policy.
+    emitted_replacement_delete_count: AtomicU32,
 }
 
 impl KittyBackend {
@@ -362,6 +369,9 @@ impl KittyBackend {
             last_render_size: Mutex::new(None),
             next_image_id: AtomicU32::new(scoped_id),
             next_placement_id: AtomicU32::new(scoped_id),
+            emitted_frame_count: AtomicU32::new(0),
+            emitted_delete_count: AtomicU32::new(0),
+            emitted_replacement_delete_count: AtomicU32::new(0),
         }
     }
 
@@ -373,6 +383,19 @@ impl KittyBackend {
             KittyTransport::FpasotermOsc => "fpasoterm-osc-rgba-zlib",
             KittyTransport::FpasotermIpc => "fpasoterm-ipc-png",
         }
+    }
+
+    /// Report only browser-side writes. This deliberately avoids claiming a
+    /// receiver acknowledgement: a terminal multiplexer may consume, rewrite,
+    /// or delay a control sequence after this process has submitted it.
+    #[must_use]
+    pub fn sender_diagnostic_summary(&self) -> String {
+        format!(
+            "emitted frames={} deletes={} pre-replacement deletes={}; receiver acknowledgement unavailable",
+            self.emitted_frame_count.load(Ordering::Relaxed),
+            self.emitted_delete_count.load(Ordering::Relaxed),
+            self.emitted_replacement_delete_count.load(Ordering::Relaxed),
+        )
     }
 
     fn write_delete(&self, writer: &mut dyn Write, image_id: u32) -> Result<()> {
@@ -392,6 +415,7 @@ impl KittyBackend {
                 .context("fpasoterm IPC transport has no bridge")?
                 .send_delete(image_id)?,
         }
+        self.emitted_delete_count.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -462,6 +486,8 @@ impl RenderBackend for KittyBackend {
             // remaining forever when the browser becomes idle after two
             // renders (the duplicated Baguette/Herdr symptom).
             self.write_delete(writer, previous_image_id)?;
+            self.emitted_replacement_delete_count
+                .fetch_add(1, Ordering::Relaxed);
         } else if self.retire_previous_frames && geometry_changed {
             // fpasoterm defers this delete until the following replacement
             // has painted.  Sending it before the transfer lets that renderer
@@ -540,8 +566,13 @@ impl RenderBackend for KittyBackend {
         // the frame boundary explicit avoids waiting for a later status line
         // before its first APC becomes readable.
         writer.flush().context("flush Kitty Graphics frame")?;
+        self.emitted_frame_count.fetch_add(1, Ordering::Relaxed);
 
         Ok(())
+    }
+
+    fn sender_diagnostic_summary(&self) -> String {
+        Self::sender_diagnostic_summary(self)
     }
 
     fn cleanup(&self, writer: &mut dyn Write) -> Result<()> {
@@ -616,6 +647,15 @@ mod tests {
         );
         assert!(!status.report_label().contains("45678"));
         assert!(!status.report_label().contains(&token));
+    }
+
+    #[test]
+    fn sender_report_is_explicitly_sender_only_before_any_frame() {
+        let backend = KittyBackend::for_fpasoterm();
+        assert_eq!(
+            backend.sender_diagnostic_summary(),
+            "emitted frames=0 deletes=0 pre-replacement deletes=0; receiver acknowledgement unavailable"
+        );
     }
 
     #[test]

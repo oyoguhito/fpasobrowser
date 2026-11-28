@@ -131,9 +131,10 @@ operation timelineを表示します。`POST engine click` / `POST engine key En
 要求送信、対応する`RECV`はreply、`TIMEOUT`はapp側の待機切れです。screenshot、tab情報、
 verification queryも同じ表示で追跡できます。通常起動でこの表示だけを使うには
 `--debug-overlay`を指定します。normal modeで`d`または`D`を押すと表示・非表示を切替できます。overlayには
-build commit、選択済みbackend/transport、Windows fpasoterm IPC bridgeの安全な状態（endpoint/token自体は非表示）も
-表示されます。normal modeの`C`はURLとbridge capabilityをredactしたsupport reportをOSC 52 clipboardへcopyします。
-そのままissueへpasteできます。
+build commit、選択済みbackend/transport、Windows fpasoterm IPC bridgeの安全な状態（endpoint/token自体は非表示）に加え、
+Kitty sender counterも表示されます。これはfpasobrowserが送出したframe/delete command数であり、multiplexerが消費・
+遅延する可能性があるため、receiverまたは描画済みのacknowledgementではないことを明示します。normal modeの`C`は
+URLとbridge capabilityをredactしたsupport reportをOSC 52 clipboardへcopyします。そのままissueへpasteできます。
 
 Windows release archiveを展開した場合は、同じdirectoryの`fpasobrowser.cmd`から起動します。
 archiveには`fpasobrowser.exe`、`libEGL.dll`、`libGLESv2.dll`が含まれるため、Cargo、Python、
