@@ -222,9 +222,12 @@ SIXEL-capable terminals.
 In fpasoterm, fpasobrowser does not issue its normal early retirement deletes.
 The fpasoterm receiver's bounded image store retires completed frames so a slow
 WebView2 decode is not cancelled before first paint. On Windows, ConPTY removes
-the public Kitty APC stream, so a current fpasoterm provides an inherited,
-authenticated loopback bridge for the same Kitty PNG image/placement frame;
-the debug transport is `fpasoterm-ipc-png`.
+the public Kitty APC stream, so a current fpasoterm provides an authenticated
+loopback bridge for the same Kitty PNG image/placement frame; the debug
+transport is `fpasoterm-ipc-png`. The bridge is normally inherited by the
+terminal child. If Herdr creates a pane from its background server instead,
+the current fpasoterm/fpasobrowser pair recovers the active bridge from a
+short-lived record in the current user's LocalAppData profile.
 Its default 8×17-pixel cell estimate matches fpasoterm's Linux/ChromeOS grid,
 and also sizes Servo's dynamic viewport. That avoids upscaling the screenshot
 again in the SIXEL renderer while preserving status/tab/toolbar rows and

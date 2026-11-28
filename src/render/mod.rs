@@ -114,7 +114,12 @@ impl SelectedBackend {
             BackendChoice::Kitty => Self::Kitty(
                 if let Some(backend) = kitty::KittyBackend::for_windows_fpasoterm_ipc() {
                     backend
-                } else if fpasoterm_is_terminal() {
+                // Herdr deliberately replaces TERM_PROGRAM inside panes, but
+                // fpasoterm's receiver remains the presentation endpoint in
+                // the supported nested configuration. Use its deferred
+                // replacement behavior for that pane so a final idle frame
+                // cannot leave the previous full-page placement stacked.
+                } else if fpasoterm_is_terminal() || herdr_is_terminal() {
                     kitty::KittyBackend::for_fpasoterm()
                 } else {
                     kitty::KittyBackend::new()
@@ -149,6 +154,17 @@ where
         || environment("FPASOTERM_GRAPHICS_TRANSPORT").is_some_and(|value| {
             value.eq_ignore_ascii_case("ipc-v1") || value.eq_ignore_ascii_case("osc-v1")
         })
+}
+
+fn herdr_is_terminal() -> bool {
+    herdr_is_terminal_in_environment(&|name| std::env::var(name).ok())
+}
+
+fn herdr_is_terminal_in_environment<F>(environment: &F) -> bool
+where
+    F: Fn(&str) -> Option<String>,
+{
+    environment("HERDR_ENV").is_some_and(|value| value == "1")
 }
 
 impl RenderBackend for SelectedBackend {
@@ -203,12 +219,20 @@ impl RenderBackend for SelectedBackend {
 
 #[cfg(test)]
 mod tests {
-    use super::fpasoterm_is_terminal_in_environment;
+    use super::{fpasoterm_is_terminal_in_environment, herdr_is_terminal_in_environment};
 
     #[test]
     fn fpasoterm_graphics_capability_survives_a_restored_terminal_tab() {
         assert!(fpasoterm_is_terminal_in_environment(&|name| {
             (name == "FPASOTERM_GRAPHICS_TRANSPORT").then(|| String::from("ipc-v1"))
         }));
+    }
+
+    #[test]
+    fn herdr_pane_uses_the_nested_terminal_graphics_policy() {
+        assert!(herdr_is_terminal_in_environment(&|name| {
+            (name == "HERDR_ENV").then(|| String::from("1"))
+        }));
+        assert!(!herdr_is_terminal_in_environment(&|_| None));
     }
 }

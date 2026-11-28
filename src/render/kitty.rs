@@ -4,8 +4,10 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use flate2::{write::ZlibEncoder, Compression};
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use std::{
+    fs,
     io::{Cursor, Read, Write},
     net::{IpAddr, SocketAddr, TcpStream},
+    path::PathBuf,
     process,
     sync::{
         atomic::{AtomicU32, Ordering},
@@ -23,6 +25,8 @@ const KITTY_ID_NAMESPACE: u32 = 0x4600_0000;
 const FPASOTERM_IPC_MAGIC: [u8; 8] = *b"FPTGFX1\0";
 const FPASOTERM_IPC_TOKEN_BYTES: usize = 32;
 const FPASOTERM_IPC_TIMEOUT: Duration = Duration::from_millis(750);
+const FPASOTERM_GRAPHICS_DISCOVERY_FILE: &str = "terminal-graphics-bridge-v1";
+const FPASOTERM_GRAPHICS_DISCOVERY_HEADER: &str = "fpasoterm-graphics-bridge-v1";
 
 /// Safe, value-free readiness state for the Windows fpasoterm graphics
 /// bridge.  In particular, it never exposes the random loopback endpoint or
@@ -31,6 +35,7 @@ const FPASOTERM_IPC_TIMEOUT: Duration = Duration::from_millis(750);
 pub enum FpasotermGraphicsBridgeStatus {
     NotRequired,
     Ready,
+    ReadyRecovered,
     TransportMissing,
     TransportUnsupported,
     EndpointMissing,
@@ -38,6 +43,9 @@ pub enum FpasotermGraphicsBridgeStatus {
     EndpointNotLoopback,
     TokenMissing,
     TokenInvalid,
+    DiscoveryMissing,
+    DiscoveryUnreadable,
+    DiscoveryInvalid,
 }
 
 impl FpasotermGraphicsBridgeStatus {
@@ -45,7 +53,10 @@ impl FpasotermGraphicsBridgeStatus {
     pub const fn report_label(self) -> &'static str {
         match self {
             Self::NotRequired => "not required on this platform",
-            Self::Ready => "ready (ipc-v1; endpoint and token redacted)",
+            Self::Ready => "ready (inherited ipc-v1; endpoint and token redacted)",
+            Self::ReadyRecovered => {
+                "ready (recovered local ipc-v1 bridge; endpoint and token redacted)"
+            }
             Self::TransportMissing => "unavailable: transport capability is missing",
             Self::TransportUnsupported => "unavailable: transport capability is not ipc-v1",
             Self::EndpointMissing => "unavailable: endpoint capability is missing",
@@ -53,7 +64,21 @@ impl FpasotermGraphicsBridgeStatus {
             Self::EndpointNotLoopback => "unavailable: endpoint is not loopback",
             Self::TokenMissing => "unavailable: token capability is missing",
             Self::TokenInvalid => "unavailable: token capability is invalid",
+            Self::DiscoveryMissing => {
+                "unavailable: capability was not inherited and no live fpasoterm bridge record was found"
+            }
+            Self::DiscoveryUnreadable => {
+                "unavailable: fpasoterm bridge record could not be read"
+            }
+            Self::DiscoveryInvalid => {
+                "unavailable: fpasoterm bridge record is invalid"
+            }
         }
+    }
+
+    #[must_use]
+    pub const fn is_ready(self) -> bool {
+        matches!(self, Self::Ready | Self::ReadyRecovered)
     }
 }
 
@@ -61,11 +86,26 @@ impl FpasotermGraphicsBridgeStatus {
 /// without returning any sensitive capability value.
 #[must_use]
 pub fn fpasoterm_graphics_bridge_status() -> FpasotermGraphicsBridgeStatus {
-    fpasoterm_graphics_bridge_status_in_environment(cfg!(target_os = "windows"), &|name| {
-        std::env::var(name).ok()
-    })
+    if !cfg!(target_os = "windows") {
+        return FpasotermGraphicsBridgeStatus::NotRequired;
+    }
+    match fpasoterm_ipc_bridge_from_environment(&|name| std::env::var(name).ok()) {
+        Ok(_) => FpasotermGraphicsBridgeStatus::Ready,
+        // Herdr and comparable terminal servers can create panes from a
+        // long-lived server that predates the fpasoterm terminal process.  In
+        // that one case, recover the bounded authenticated bridge from
+        // fpasoterm's current-user, short-lived record.
+        Err(FpasotermGraphicsBridgeStatus::TransportMissing) => {
+            match recover_fpasoterm_ipc_bridge() {
+                Ok(_) => FpasotermGraphicsBridgeStatus::ReadyRecovered,
+                Err(status) => status,
+            }
+        }
+        Err(status) => status,
+    }
 }
 
+#[cfg(test)]
 fn fpasoterm_graphics_bridge_status_in_environment<F>(
     is_windows: bool,
     environment: &F,
@@ -74,36 +114,12 @@ where
     F: Fn(&str) -> Option<String>,
 {
     if !is_windows {
-        return FpasotermGraphicsBridgeStatus::NotRequired;
+        FpasotermGraphicsBridgeStatus::NotRequired
+    } else {
+        fpasoterm_ipc_bridge_from_environment(environment)
+            .map(|_| FpasotermGraphicsBridgeStatus::Ready)
+            .unwrap_or_else(|status| status)
     }
-    match environment("FPASOTERM_GRAPHICS_TRANSPORT") {
-        None => return FpasotermGraphicsBridgeStatus::TransportMissing,
-        Some(value) if !value.eq_ignore_ascii_case("ipc-v1") => {
-            return FpasotermGraphicsBridgeStatus::TransportUnsupported;
-        }
-        Some(_) => {}
-    }
-    let endpoint: SocketAddr = match environment("FPASOTERM_GRAPHICS_ENDPOINT") {
-        None => return FpasotermGraphicsBridgeStatus::EndpointMissing,
-        Some(value) => match value.parse() {
-            Ok(endpoint) => endpoint,
-            Err(_) => return FpasotermGraphicsBridgeStatus::EndpointInvalid,
-        },
-    };
-    if !matches!(endpoint.ip(), IpAddr::V4(address) if address.is_loopback()) {
-        return FpasotermGraphicsBridgeStatus::EndpointNotLoopback;
-    }
-    let token = match environment("FPASOTERM_GRAPHICS_TOKEN") {
-        None => return FpasotermGraphicsBridgeStatus::TokenMissing,
-        Some(value) => match STANDARD.decode(value) {
-            Ok(value) => value,
-            Err(_) => return FpasotermGraphicsBridgeStatus::TokenInvalid,
-        },
-    };
-    if token.len() != FPASOTERM_IPC_TOKEN_BYTES {
-        return FpasotermGraphicsBridgeStatus::TokenInvalid;
-    }
-    FpasotermGraphicsBridgeStatus::Ready
 }
 
 /// Standard Kitty APC is the normal transport. `FpasotermOsc` remains only for
@@ -119,29 +135,33 @@ enum KittyTransport {
 /// An inherited, per-terminal capability for the Windows fpasoterm graphics
 /// bridge.  The listener is loopback-only and the token is generated by the
 /// parent terminal process; neither is read from configuration or CLI input.
-#[derive(Debug)]
 struct FpasotermIpcBridge {
     endpoint: SocketAddr,
     token: [u8; FPASOTERM_IPC_TOKEN_BYTES],
 }
 
+impl std::fmt::Debug for FpasotermIpcBridge {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The endpoint and bearer token are intentionally absent even from
+        // debug output: callers often include Debug values in support logs.
+        formatter
+            .debug_struct("FpasotermIpcBridge")
+            .finish_non_exhaustive()
+    }
+}
+
 impl FpasotermIpcBridge {
     fn from_environment() -> Option<Self> {
-        if fpasoterm_graphics_bridge_status() != FpasotermGraphicsBridgeStatus::Ready {
+        if !cfg!(target_os = "windows") {
             return None;
         }
-        let endpoint: SocketAddr = std::env::var("FPASOTERM_GRAPHICS_ENDPOINT")
-            .ok()?
-            .parse()
-            .ok()?;
-        if !matches!(endpoint.ip(), IpAddr::V4(address) if address.is_loopback()) {
-            return None;
+        match fpasoterm_ipc_bridge_from_environment(&|name| std::env::var(name).ok()) {
+            Ok(bridge) => Some(bridge),
+            Err(FpasotermGraphicsBridgeStatus::TransportMissing) => {
+                recover_fpasoterm_ipc_bridge().ok()
+            }
+            Err(_) => None,
         }
-        let token = STANDARD
-            .decode(std::env::var("FPASOTERM_GRAPHICS_TOKEN").ok()?)
-            .ok()?;
-        let token: [u8; FPASOTERM_IPC_TOKEN_BYTES] = token.try_into().ok()?;
-        Some(Self { endpoint, token })
     }
 
     fn send(
@@ -193,16 +213,93 @@ impl FpasotermIpcBridge {
     }
 }
 
+fn fpasoterm_ipc_bridge_from_environment<F>(
+    environment: &F,
+) -> Result<FpasotermIpcBridge, FpasotermGraphicsBridgeStatus>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    fpasoterm_ipc_bridge_from_values(
+        environment("FPASOTERM_GRAPHICS_TRANSPORT").as_deref(),
+        environment("FPASOTERM_GRAPHICS_ENDPOINT").as_deref(),
+        environment("FPASOTERM_GRAPHICS_TOKEN").as_deref(),
+    )
+}
+
+fn fpasoterm_ipc_bridge_from_values(
+    transport: Option<&str>,
+    endpoint: Option<&str>,
+    token: Option<&str>,
+) -> Result<FpasotermIpcBridge, FpasotermGraphicsBridgeStatus> {
+    match transport {
+        None => return Err(FpasotermGraphicsBridgeStatus::TransportMissing),
+        Some(value) if !value.eq_ignore_ascii_case("ipc-v1") => {
+            return Err(FpasotermGraphicsBridgeStatus::TransportUnsupported);
+        }
+        Some(_) => {}
+    }
+    let endpoint: SocketAddr = endpoint
+        .ok_or(FpasotermGraphicsBridgeStatus::EndpointMissing)?
+        .parse()
+        .map_err(|_| FpasotermGraphicsBridgeStatus::EndpointInvalid)?;
+    if !matches!(endpoint.ip(), IpAddr::V4(address) if address.is_loopback()) {
+        return Err(FpasotermGraphicsBridgeStatus::EndpointNotLoopback);
+    }
+    let token = STANDARD
+        .decode(token.ok_or(FpasotermGraphicsBridgeStatus::TokenMissing)?)
+        .map_err(|_| FpasotermGraphicsBridgeStatus::TokenInvalid)?;
+    let token: [u8; FPASOTERM_IPC_TOKEN_BYTES] = token
+        .try_into()
+        .map_err(|_| FpasotermGraphicsBridgeStatus::TokenInvalid)?;
+    Ok(FpasotermIpcBridge { endpoint, token })
+}
+
+fn recover_fpasoterm_ipc_bridge() -> Result<FpasotermIpcBridge, FpasotermGraphicsBridgeStatus> {
+    let path = std::env::var_os("LOCALAPPDATA")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .map(|root| {
+            root.join("fpasoterm")
+                .join(FPASOTERM_GRAPHICS_DISCOVERY_FILE)
+        })
+        .ok_or(FpasotermGraphicsBridgeStatus::DiscoveryMissing)?;
+    let record = fs::read_to_string(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            FpasotermGraphicsBridgeStatus::DiscoveryMissing
+        } else {
+            FpasotermGraphicsBridgeStatus::DiscoveryUnreadable
+        }
+    })?;
+    parse_fpasoterm_graphics_discovery_record(&record)
+}
+
+fn parse_fpasoterm_graphics_discovery_record(
+    record: &str,
+) -> Result<FpasotermIpcBridge, FpasotermGraphicsBridgeStatus> {
+    let mut lines = record.lines();
+    let header = lines.next();
+    let transport = lines.next();
+    let endpoint = lines.next();
+    let token = lines.next();
+    if header != Some(FPASOTERM_GRAPHICS_DISCOVERY_HEADER) || lines.next().is_some() {
+        return Err(FpasotermGraphicsBridgeStatus::DiscoveryInvalid);
+    }
+    fpasoterm_ipc_bridge_from_values(transport, endpoint, token)
+        .map_err(|_| FpasotermGraphicsBridgeStatus::DiscoveryInvalid)
+}
+
 #[derive(Debug)]
 pub struct KittyBackend {
     transport: KittyTransport,
     ipc_bridge: Option<FpasotermIpcBridge>,
     /// A normal terminal can release the frame from two updates ago as soon as
-    /// the next transfer is submitted. fpasoterm's WebView2 decoder is
-    /// asynchronous, however, and can still be decoding that frame when its
-    /// delete reaches the parser. In that mode the receiver's bounded image
-    /// store owns retirement instead.
+    /// the next transfer is submitted. fpasoterm's decoder is asynchronous,
+    /// however, and needs its own deferred replacement protocol.
     retire_previous_frames: bool,
+    /// fpasoterm defers a delete sent immediately before a replacement until
+    /// that replacement paints. This preserves one fallback frame without
+    /// leaving a second full-screen placement after rendering becomes idle.
+    defer_previous_frame_retirement: bool,
     /// The image for the newest frame.
     active_image_id: AtomicU32,
     /// Track the immediately preceding frame for normal terminals, where it
@@ -220,21 +317,21 @@ pub struct KittyBackend {
 impl KittyBackend {
     #[must_use]
     pub fn new() -> Self {
-        Self::with_frame_retirement(true, KittyTransport::StandardApc)
+        Self::with_frame_retirement(true, false, KittyTransport::StandardApc)
     }
 
-    /// Use the standard PNG protocol for fpasoterm, while allowing its bounded
-    /// receiver to retire delayed frames after they have had a chance to paint.
+    /// Use fpasoterm's deferred-delete replacement protocol with the standard
+    /// PNG transport, preventing completed frames from stacking in idle panes.
     #[must_use]
     pub fn for_fpasoterm() -> Self {
-        Self::with_frame_retirement(false, KittyTransport::StandardApc)
+        Self::with_frame_retirement(false, true, KittyTransport::StandardApc)
     }
 
     /// Use the legacy experimental fpasoterm OSC bridge. New Windows builds
     /// use [`Self::for_windows_fpasoterm_ipc`] instead.
     #[must_use]
     pub fn for_windows_fpasoterm() -> Self {
-        Self::with_frame_retirement(false, KittyTransport::FpasotermOsc)
+        Self::with_frame_retirement(false, true, KittyTransport::FpasotermOsc)
     }
 
     /// Use fpasoterm's authenticated local bridge when Windows ConPTY strips
@@ -242,18 +339,24 @@ impl KittyBackend {
     #[must_use]
     pub fn for_windows_fpasoterm_ipc() -> Option<Self> {
         FpasotermIpcBridge::from_environment().map(|bridge| {
-            let mut backend = Self::with_frame_retirement(false, KittyTransport::FpasotermIpc);
+            let mut backend =
+                Self::with_frame_retirement(false, false, KittyTransport::FpasotermIpc);
             backend.ipc_bridge = Some(bridge);
             backend
         })
     }
 
-    fn with_frame_retirement(retire_previous_frames: bool, transport: KittyTransport) -> Self {
+    fn with_frame_retirement(
+        retire_previous_frames: bool,
+        defer_previous_frame_retirement: bool,
+        transport: KittyTransport,
+    ) -> Self {
         let scoped_id = KITTY_ID_NAMESPACE | (process::id() & 0x00ff_ffff);
         Self {
             transport,
             ipc_bridge: None,
             retire_previous_frames,
+            defer_previous_frame_retirement,
             active_image_id: AtomicU32::new(0),
             retained_image_id: AtomicU32::new(0),
             last_render_size: Mutex::new(None),
@@ -352,7 +455,14 @@ impl RenderBackend for KittyBackend {
         };
         let placement_id = self.next_placement_id.fetch_add(1, Ordering::Relaxed);
 
-        if self.retire_previous_frames && geometry_changed {
+        if self.defer_previous_frame_retirement && previous_image_id != 0 {
+            // fpasoterm snapshots this deletion and applies it only once the
+            // following placement has painted.  Sending it before the new
+            // transfer avoids both a black gap and an old full-page frame
+            // remaining forever when the browser becomes idle after two
+            // renders (the duplicated Baguette/Herdr symptom).
+            self.write_delete(writer, previous_image_id)?;
+        } else if self.retire_previous_frames && geometry_changed {
             // fpasoterm defers this delete until the following replacement
             // has painted.  Sending it before the transfer lets that renderer
             // pair the two operations, while a different-sized stale frame is
@@ -416,6 +526,7 @@ impl RenderBackend for KittyBackend {
         // here: fpasoterm's deferred delete must remove only that retired
         // canvas, never the newest replacement or its one-frame fallback.
         if self.retire_previous_frames
+            && !self.defer_previous_frame_retirement
             && !geometry_changed
             && retained_image_id != 0
             && retained_image_id != previous_image_id
@@ -501,7 +612,7 @@ mod tests {
         assert_eq!(status, FpasotermGraphicsBridgeStatus::Ready);
         assert_eq!(
             status.report_label(),
-            "ready (ipc-v1; endpoint and token redacted)"
+            "ready (inherited ipc-v1; endpoint and token redacted)"
         );
         assert!(!status.report_label().contains("45678"));
         assert!(!status.report_label().contains(&token));
@@ -515,6 +626,35 @@ mod tests {
             status.report_label(),
             "unavailable: transport capability is missing"
         );
+    }
+
+    #[test]
+    fn graphics_bridge_recovery_record_keeps_the_capability_redacted() {
+        let token = STANDARD.encode([9_u8; FPASOTERM_IPC_TOKEN_BYTES]);
+        let record =
+            format!("{FPASOTERM_GRAPHICS_DISCOVERY_HEADER}\nipc-v1\n127.0.0.1:45678\n{token}\n");
+
+        let bridge = parse_fpasoterm_graphics_discovery_record(&record)
+            .expect("valid current-user fpasoterm bridge record");
+        assert_eq!(bridge.endpoint, "127.0.0.1:45678".parse().unwrap());
+        assert_eq!(bridge.token, [9_u8; FPASOTERM_IPC_TOKEN_BYTES]);
+        assert!(!format!("{bridge:?}").contains("45678"));
+        assert!(!format!("{bridge:?}").contains(&token));
+        assert_eq!(
+            FpasotermGraphicsBridgeStatus::ReadyRecovered.report_label(),
+            "ready (recovered local ipc-v1 bridge; endpoint and token redacted)"
+        );
+    }
+
+    #[test]
+    fn graphics_bridge_recovery_rejects_extra_or_malformed_fields() {
+        let record = format!(
+            "{FPASOTERM_GRAPHICS_DISCOVERY_HEADER}\nipc-v1\n127.0.0.1:45678\nnot-base64\nextra\n"
+        );
+        assert!(matches!(
+            parse_fpasoterm_graphics_discovery_record(&record),
+            Err(FpasotermGraphicsBridgeStatus::DiscoveryInvalid)
+        ));
     }
 
     #[test]

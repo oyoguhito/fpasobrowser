@@ -107,7 +107,9 @@ cargo build --locked
 checkoutではlauncherを優先してください。
 
 引数を省略したbackendは、terminalが対応をadvertiseしている場合（fpasotermを含む）に高解像度の`kitty`を自動選択し、
-それ以外ではportableな`half-block`を使います。PowerShellとWindows Terminalではfallback理由をactivity lineに表示します。
+それ以外ではportableな`half-block`を使います。WindowsのHerdr paneでは、current fpasoterm/fpasobrowserの組合せが
+current userの短命recovery recordからactive IPC bridgeを確認できる場合も`kitty`を自動選択します。PowerShellと
+Windows Terminalではfallback理由をactivity lineに表示します。
 対応しているが自動検出されないterminalで強制するには、次を指定します。
 
 ```powershell

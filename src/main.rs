@@ -10,7 +10,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use clap::Parser;
 use fpasobrowser::{
     detailed_version_info,
-    render::{BackendChoice, TerminalCellPixels},
+    render::{kitty::fpasoterm_graphics_bridge_status, BackendChoice, TerminalCellPixels},
 };
 #[cfg(target_os = "linux")]
 use std::process::Command;
@@ -320,6 +320,17 @@ fn kitty_graphics_is_advertised<F>(environment: &F) -> bool
 where
     F: Fn(&str) -> Option<String>,
 {
+    // Herdr creates panes from a background server, so its TERM_PROGRAM is
+    // deliberately `herdr` rather than the fpasoterm that presents the pane.
+    // On Windows, a live fpasoterm recovery record is the positive capability
+    // signal for precisely that nested case.  Do not apply it to unrelated
+    // consoles merely because fpasoterm happens to be open elsewhere.
+    if cfg!(target_os = "windows")
+        && environment("HERDR_ENV").is_some_and(|value| value == "1")
+        && fpasoterm_graphics_bridge_status().is_ready()
+    {
+        return true;
+    }
     if environment("TERM_PROGRAM").is_some_and(|value| value.eq_ignore_ascii_case("fpasoterm")) {
         return !cfg!(target_os = "windows") || fpasoterm_graphics_is_advertised(environment);
     }

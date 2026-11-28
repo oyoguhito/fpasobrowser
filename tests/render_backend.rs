@@ -110,7 +110,7 @@ fn kitty_backend_emits_kitty_graphics_sequences() -> Result<()> {
 }
 
 #[test]
-fn fpasoterm_kitty_backend_defers_retiring_unpainted_frames() -> Result<()> {
+fn fpasoterm_kitty_backend_schedules_the_previous_frame_before_replacement() -> Result<()> {
     let image = DynamicImage::ImageRgba8(RgbaImage::new(1, 2));
     let backend = KittyBackend::for_fpasoterm();
     let size = RenderSize {
@@ -124,7 +124,16 @@ fn fpasoterm_kitty_backend_defers_retiring_unpainted_frames() -> Result<()> {
 
     let output = String::from_utf8(output)?;
     assert_eq!(output.matches("a=T,f=100,t=d").count(), 3);
-    assert!(!output.contains("\x1b_Ga=d,d=I,i="));
+    assert_eq!(output.matches("\x1b_Ga=d,d=I,i=").count(), 2);
+    let first_transfer = output.find("a=T,f=100,t=d").expect("first transfer");
+    let first_delete = output
+        .find("\x1b_Ga=d,d=I,i=")
+        .expect("first deferred delete");
+    let second_transfer = output[first_transfer + 1..]
+        .find("a=T,f=100,t=d")
+        .map(|offset| first_transfer + 1 + offset)
+        .expect("second transfer");
+    assert!(first_transfer < first_delete && first_delete < second_transfer);
     Ok(())
 }
 

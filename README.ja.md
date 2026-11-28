@@ -110,9 +110,11 @@ Kitty Graphics Protocolが使えるKitty、またはgraphics対応をadvertise�
 引数なしの`auto`が`kitty`を選びます。Windows版のcurrent fpasotermはchild processへ
 `FPASOTERM_GRAPHICS_TRANSPORT=ipc-v1`を通知します。これはConPTYがAPCを破棄する経路で、
 KittyのPNG image/placement semanticsを保ったまま、認証済みlocal bridgeでframeを渡すためです。
-`auto`では、この通知が無い古いfpasotermを`half-block`へfallbackします。一方、`--backend kitty`は
-明示指定を尊重し、通知を継承できていない既存tab/RDP sessionでは標準Kitty出力を試行します。imageが
-出ない場合はfpasotermを更新・完全再起動してから再試行してください。
+Herdrのbackground serverがpaneを起動してchild environmentを継承できない場合も、current fpasotermと
+fpasobrowserの組合せはcurrent userのLocalAppDataにある短命のrecovery recordからactive bridgeを回復します。
+`auto`では、この通知もrecovery recordも無い古いfpasotermを`half-block`へfallbackします。一方、`--backend kitty`は
+明示指定を尊重し、bridge capabilityを見つけられない場合にも標準Kitty出力を試行します。imageが出ない場合は
+fpasotermを更新・完全再起動してから再試行してください。
 
 ```powershell
 .\fpasobrowser.cmd --backend kitty --debug
@@ -120,8 +122,9 @@ KittyのPNG image/placement semanticsを保ったまま、認証済みlocal brid
 
 Windows上のcurrent fpasoterm内では、`--debug`に
 `backend=kitty transport=fpasoterm-ipc-png`が出ることを確認してください。固定portを開かず、
-起動したterminal childだけが継承するloopback endpointとtokenを使います。遷移後も前frameを保持した
-まま、新しいpage frameを取得・表示します。
+通常は起動したterminal childだけが継承するloopback endpointとtokenを使います。Herdr paneでは
+short-lived current-user recordから同じbridgeを回復します。遷移後も前frameを保持したまま、新しいpage
+frameを取得・表示します。
 
 `--debug`では、標準errorへの出力に加えてpage上部へ **FPASOBROWSER DEVTOOLS** の
 operation timelineを表示します。`POST engine click` / `POST engine key Enter`はbrowserへの
@@ -140,10 +143,10 @@ LLVMは不要です。
 
 | backend | 用途 |
 | --- | --- |
-| `auto` | 既定。Kitty、またはgraphics対応のfpasotermを検出できれば`kitty`、それ以外は`half-block`を選択します。Windowsで互換性通知のない古いfpasotermを検出した場合も`half-block`へfallbackします。 |
+| `auto` | 既定。Kitty、またはgraphics対応のfpasotermを検出できれば`kitty`、それ以外は`half-block`を選択します。Windowsでは継承した互換性通知を使い、Herdr paneではcurrent userの短命recovery recordからactive bridgeを検出します。どちらも無い古いfpasotermでは`half-block`へfallbackします。 |
 | `half-block` | ANSI truecolorのみを使う可搬性重視のfallbackです。 |
 | `sixel` | SIXEL対応terminal用の216色画像表示です。 |
-| `kitty` | 圧縮済みPNG画像をKittyのimage/placement semanticsでterminal cellへ配置します。通常のdebug表示は`kitty-png`です。Windows上のcurrent fpasotermではConPTY越しのAPCを使わず、継承済み認証local bridgeによる`fpasoterm-ipc-png`を使います。fpasotermを識別できる場合は、遷移frameのdecode中にも前frameを残すため、送信側のframe retirementを遅延します。 |
+| `kitty` | 圧縮済みPNG画像をKittyのimage/placement semanticsでterminal cellへ配置します。通常のdebug表示は`kitty-png`です。Windows上のcurrent fpasotermではConPTY越しのAPCを使わず、認証local bridgeによる`fpasoterm-ipc-png`を使います。通常は継承し、Herdr paneでは短命のcurrent-user recordから回復します。fpasotermを識別できる場合は、遷移frameのdecode中にも前frameを残すため、送信側のframe retirementを遅延します。 |
 
 ## 操作
 

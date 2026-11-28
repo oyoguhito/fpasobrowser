@@ -189,12 +189,14 @@ terminal advertises it (including fpasoterm), and otherwise selects portable
 `half-block`. On Windows, a current fpasoterm advertises its inherited,
 authenticated graphics bridge with `FPASOTERM_GRAPHICS_TRANSPORT=ipc-v1`.
 It preserves Kitty PNG image and placement semantics without sending APC
-through ConPTY, which removes that stream before fpasoterm can parse it. An
-older fpasoterm without that compatibility marker is deliberately treated as
-`half-block` rather than receiving a protocol it may not implement. In
-PowerShell or Windows Terminal, the activity line explains why the fallback
-was selected. To force a Kitty-capable terminal that does not advertise itself,
-use:
+through ConPTY, which removes that stream before fpasoterm can parse it. For a
+Herdr pane created by a background server, a current fpasoterm/fpasobrowser
+pair can safely recover that active bridge from a short-lived record in the
+current user's LocalAppData profile. An older fpasoterm without either
+capability is deliberately treated as `half-block` rather than receiving a
+protocol it may not implement. In PowerShell or Windows Terminal, the activity
+line explains why the fallback was selected. To force a Kitty-capable terminal
+that does not advertise itself, use:
 
 ```powershell
 .\fpasobrowser.cmd --backend kitty
@@ -442,10 +444,10 @@ Controls:
 
 | Backend | Status | Characteristics |
 | --- | --- | --- |
-| `auto` | Default / available | Selects `kitty` when `KITTY_WINDOW_ID`, `TERM=xterm-kitty`, or fpasoterm advertises support. On Windows, the fpasoterm advertisement requires `FPASOTERM_GRAPHICS_TRANSPORT=ipc-v1`; otherwise `auto` selects `half-block` and explains the fallback in the activity line. An explicit `--backend kitty` attempts normal Kitty output when the inherited bridge capability is absent; update and fully restart fpasoterm if no image appears. |
+| `auto` | Default / available | Selects `kitty` when `KITTY_WINDOW_ID`, `TERM=xterm-kitty`, or fpasoterm advertises support. On Windows, the direct fpasoterm advertisement requires `FPASOTERM_GRAPHICS_TRANSPORT=ipc-v1`. A current fpasoterm/fpasobrowser pair also detects the active bridge in a Herdr pane through its short-lived current-user recovery record. Otherwise `auto` selects `half-block` and explains the fallback in the activity line. An explicit `--backend kitty` attempts normal Kitty output when neither bridge capability is available; update and fully restart fpasoterm if no image appears. |
 | `half-block` | Available | ANSI truecolor renderer using `▀`. Works in ordinary modern terminals and does not need Kitty/SIXEL/iTerm2 image protocols. Lower fidelity than real image protocols. |
 | `sixel` | Available | Encodes the screenshot as a 216-color SIXEL image. Its default 8×17-pixel cell estimate matches fpasoterm's Linux/ChromeOS terminal grid. Servo's dynamic viewport uses exactly the same geometry, so the screenshot is not enlarged again during SIXEL presentation and mouse coordinates remain aligned while preserving the three UI lines. Use `--sixel-cell-size WIDTHxHEIGHT` (or `FPASOBROWSER_SIXEL_CELL_SIZE`) when another SIXEL terminal uses different physical cell dimensions; the toolbar shows the active value. Full-frame updates are deduplicated, hover redraw is suppressed, and loading is polled at a lower rate so click navigation finishes without idle flicker. |
-| `kitty` | Available | Sends compact PNG screenshots with Kitty image/placement semantics. Its normal wire format is the standard Kitty Graphics Protocol (APC), with debug label `kitty-png`. On Windows inside a current fpasoterm it instead uses the inherited, authenticated local bridge (`fpasoterm-ipc-png`) because ConPTY removes APC before the terminal renderer can parse it. Sender-side retirement is deferred so the previous frame remains visible while a navigation frame is decoded. |
+| `kitty` | Available | Sends compact PNG screenshots with Kitty image/placement semantics. Its normal wire format is the standard Kitty Graphics Protocol (APC), with debug label `kitty-png`. On Windows inside a current fpasoterm it instead uses the authenticated local bridge (`fpasoterm-ipc-png`) because ConPTY removes APC before the terminal renderer can parse it. The bridge is normally inherited; a Herdr pane can recover the active bridge from fpasoterm's short-lived current-user record. Sender-side retirement is deferred so the previous frame remains visible while a navigation frame is decoded. |
 
 ## Documentation
 
