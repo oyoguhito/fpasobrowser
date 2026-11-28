@@ -1,0 +1,255 @@
+pub mod half_block;
+pub mod kitty;
+pub mod sixel;
+
+use anyhow::Result;
+use clap::ValueEnum;
+use image::DynamicImage;
+use std::io::Write;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RenderSize {
+    pub columns: u16,
+    pub rows: u16,
+}
+/// Physical pixel geometry used by an image renderer for one terminal cell.
+///
+/// Most renderers can work with the generic screenshot size. Image protocols
+/// such as SIXEL, however, need an explicit raster size. Supplying that same
+/// geometry to the browser keeps the screenshot and the terminal placement at
+/// one-to-one scale, which is also essential for pointer coordinate mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalCellPixels {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl RenderSize {
+    #[must_use]
+    pub fn image_width(self) -> u32 {
+        u32::from(self.columns)
+    }
+
+    #[must_use]
+    pub fn image_height(self) -> u32 {
+        u32::from(self.rows) * 2
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum BackendChoice {
+    Auto,
+    HalfBlock,
+    Sixel,
+    Kitty,
+}
+
+pub trait RenderBackend {
+    fn name(&self) -> &'static str;
+
+    /// A full SIXEL frame is substantially larger and more disruptive to the
+    /// terminal than a Kitty placement replacement or ANSI cell update. The
+    /// app uses this hint to debounce cosmetic redraws while still forwarding
+    /// pointer and keyboard input immediately.
+    fn frame_transport_is_expensive(&self) -> bool {
+        false
+    }
+
+    /// Return the physical pixel size that this backend assigns to one
+    /// terminal cell, when it has one. The application uses it to size the
+    /// dynamic browser viewport before a screenshot is captured.
+    fn terminal_cell_pixels(&self) -> Option<TerminalCellPixels> {
+        None
+    }
+
+    /// Whether changing a frame must first erase terminal cells.
+    ///
+    /// ANSI and SIXEL renderers paint terminal cells directly, so clearing is
+    /// required to remove pixels left by the preceding frame. Kitty replaces
+    /// its process-scoped placement itself; a terminal-wide clear before every
+    /// replacement creates a visible blank interval in nested terminal
+    /// renderers such as fpasoterm/Herdr.
+    fn clears_terminal_before_frame(&self) -> bool {
+        true
+    }
+
+    /// A safe, sender-side status for developer overlays and issue reports.
+    ///
+    /// Terminal image protocols are write-only: a renderer can report the
+    /// commands it emitted, but it cannot infer that a multiplexer forwarded
+    /// them or that the eventual image receiver painted them.
+    fn sender_diagnostic_summary(&self) -> String {
+        String::from("sender telemetry unavailable for this renderer")
+    }
+
+    fn render(&self, image: &DynamicImage, size: RenderSize, writer: &mut dyn Write) -> Result<()>;
+
+    fn cleanup(&self, _writer: &mut dyn Write) -> Result<()> {
+        Ok(())
+    }
+}
+
+pub enum SelectedBackend {
+    HalfBlock(half_block::HalfBlockBackend),
+    Sixel(sixel::SixelBackend),
+    Kitty(kitty::KittyBackend),
+}
+
+impl SelectedBackend {
+    #[must_use]
+    pub fn from_choice(choice: BackendChoice) -> Self {
+        Self::from_choice_with_sixel_cell_pixels(choice, None)
+    }
+
+    /// Select a renderer, optionally overriding SIXEL's physical cell size.
+    /// The setting is intentionally ignored for image protocols that negotiate
+    /// their own placement geometry.
+    #[must_use]
+    pub fn from_choice_with_sixel_cell_pixels(
+        choice: BackendChoice,
+        sixel_cell_pixels: Option<TerminalCellPixels>,
+    ) -> Self {
+        match choice {
+            BackendChoice::Auto | BackendChoice::HalfBlock => {
+                Self::HalfBlock(half_block::HalfBlockBackend::new())
+            }
+            BackendChoice::Sixel => Self::Sixel(match sixel_cell_pixels {
+                Some(cell_pixels) => sixel::SixelBackend::with_cell_pixels(cell_pixels),
+                None => sixel::SixelBackend::new(),
+            }),
+            // Windows fpasoterm exposes an inherited, authenticated local
+            // bridge when ConPTY removes both Kitty APC and OSC before the
+            // renderer sees them. It preserves Kitty PNG image/placement
+            // semantics without attempting another escape-sequence wrapper.
+            BackendChoice::Kitty => Self::Kitty(
+                if let Some(backend) = kitty::KittyBackend::for_windows_fpasoterm_ipc() {
+                    backend
+                // Herdr deliberately replaces TERM_PROGRAM inside panes, but
+                // fpasoterm's receiver remains the presentation endpoint in
+                // the supported nested configuration. Use its deferred
+                // replacement behavior for that pane so a final idle frame
+                // cannot leave the previous full-page placement stacked.
+                } else if fpasoterm_is_terminal() || herdr_is_terminal() {
+                    kitty::KittyBackend::for_fpasoterm()
+                } else {
+                    kitty::KittyBackend::new()
+                },
+            ),
+        }
+    }
+
+    /// Describe the concrete wire representation used by the selected backend.
+    ///
+    /// This is deliberately separate from [`RenderBackend::name`] so
+    /// diagnostics identify the concrete terminal wire format.
+    #[must_use]
+    pub const fn transport_label(&self) -> &'static str {
+        match self {
+            Self::HalfBlock(_) => "ansi-half-block",
+            Self::Sixel(_) => "sixel",
+            Self::Kitty(backend) => backend.transport_label(),
+        }
+    }
+}
+
+fn fpasoterm_is_terminal() -> bool {
+    fpasoterm_is_terminal_in_environment(&|name| std::env::var(name).ok())
+}
+
+fn fpasoterm_is_terminal_in_environment<F>(environment: &F) -> bool
+where
+    F: Fn(&str) -> Option<String>,
+{
+    environment("TERM_PROGRAM").is_some_and(|value| value.eq_ignore_ascii_case("fpasoterm"))
+        || environment("FPASOTERM_GRAPHICS_TRANSPORT").is_some_and(|value| {
+            value.eq_ignore_ascii_case("ipc-v1") || value.eq_ignore_ascii_case("osc-v1")
+        })
+}
+
+fn herdr_is_terminal() -> bool {
+    herdr_is_terminal_in_environment(&|name| std::env::var(name).ok())
+}
+
+fn herdr_is_terminal_in_environment<F>(environment: &F) -> bool
+where
+    F: Fn(&str) -> Option<String>,
+{
+    environment("HERDR_ENV").is_some_and(|value| value == "1")
+}
+
+impl RenderBackend for SelectedBackend {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::HalfBlock(backend) => backend.name(),
+            Self::Sixel(backend) => backend.name(),
+            Self::Kitty(backend) => backend.name(),
+        }
+    }
+
+    fn frame_transport_is_expensive(&self) -> bool {
+        match self {
+            Self::HalfBlock(backend) => backend.frame_transport_is_expensive(),
+            Self::Sixel(backend) => backend.frame_transport_is_expensive(),
+            Self::Kitty(backend) => backend.frame_transport_is_expensive(),
+        }
+    }
+
+    fn terminal_cell_pixels(&self) -> Option<TerminalCellPixels> {
+        match self {
+            Self::HalfBlock(backend) => backend.terminal_cell_pixels(),
+            Self::Sixel(backend) => backend.terminal_cell_pixels(),
+            Self::Kitty(backend) => backend.terminal_cell_pixels(),
+        }
+    }
+
+    fn clears_terminal_before_frame(&self) -> bool {
+        match self {
+            Self::HalfBlock(backend) => backend.clears_terminal_before_frame(),
+            Self::Sixel(backend) => backend.clears_terminal_before_frame(),
+            Self::Kitty(backend) => backend.clears_terminal_before_frame(),
+        }
+    }
+
+    fn sender_diagnostic_summary(&self) -> String {
+        match self {
+            Self::HalfBlock(backend) => backend.sender_diagnostic_summary(),
+            Self::Sixel(backend) => backend.sender_diagnostic_summary(),
+            Self::Kitty(backend) => backend.sender_diagnostic_summary(),
+        }
+    }
+
+    fn render(&self, image: &DynamicImage, size: RenderSize, writer: &mut dyn Write) -> Result<()> {
+        match self {
+            Self::HalfBlock(backend) => backend.render(image, size, writer),
+            Self::Sixel(backend) => backend.render(image, size, writer),
+            Self::Kitty(backend) => backend.render(image, size, writer),
+        }
+    }
+
+    fn cleanup(&self, writer: &mut dyn Write) -> Result<()> {
+        match self {
+            Self::HalfBlock(backend) => backend.cleanup(writer),
+            Self::Sixel(backend) => backend.cleanup(writer),
+            Self::Kitty(backend) => backend.cleanup(writer),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fpasoterm_is_terminal_in_environment, herdr_is_terminal_in_environment};
+
+    #[test]
+    fn fpasoterm_graphics_capability_survives_a_restored_terminal_tab() {
+        assert!(fpasoterm_is_terminal_in_environment(&|name| {
+            (name == "FPASOTERM_GRAPHICS_TRANSPORT").then(|| String::from("ipc-v1"))
+        }));
+    }
+
+    #[test]
+    fn herdr_pane_uses_the_nested_terminal_graphics_policy() {
+        assert!(herdr_is_terminal_in_environment(&|name| {
+            (name == "HERDR_ENV").then(|| String::from("1"))
+        }));
+        assert!(!herdr_is_terminal_in_environment(&|_| None));
+    }
+}

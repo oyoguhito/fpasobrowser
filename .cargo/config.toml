@@ -1,0 +1,21 @@
+# Embedded Servo has large native artifacts. Three project-local build jobs keep
+# memory bounded while allowing WebRender's shader generator to obtain a Cargo
+# jobserver token during a cold build. One or two jobs can leave it waiting
+# indefinitely after an invalidated cache.
+[build]
+jobs = 3
+
+# Stylo's standalone crate defaults its parallel CSS workers to a 512 KiB
+# stack. That is insufficient for real-world pages in an unoptimized Cargo
+# build on Windows (for example, the Google start page after editing its
+# search field). Servo's own `mach` build raises this to 8 MiB; apply the same
+# compile-time setting for this embedded-Cargo build. It reserves virtual
+# address space only and prevents `StyleThread#N has overflowed its stack`.
+[env]
+SERVO_STYLE_THREAD_STACK_SIZE_KB = { value = "8192", force = true }
+
+# Use mold through clang on Linux/ChromeOS Linux. This target-specific setting
+# leaves Windows and macOS on their platform toolchains.
+[target.'cfg(target_os = "linux")']
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=/usr/bin/mold"]
